@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app import engine
 from app.models import (
@@ -19,6 +21,8 @@ from app.models import (
     move_out,
 )
 from app.store import GameNotFound, GameRepository, SqliteRepository
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 STATUS_BY_CODE = {
     GameNotFound.code: 404,
@@ -83,4 +87,6 @@ def create_app(repo: GameRepository | None = None) -> FastAPI:
     def get_moves(game_id: str) -> list[MoveOut]:
         return [move_out(m) for m in repo.get(game_id).moves]
 
+    # Mounted last so every API route above wins; serves the UI at /.
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
     return app

@@ -11,6 +11,8 @@ from app.engine import (
     OutOfBounds,
     StaleVersion,
     apply_move,
+    completes_line,
+    legal_moves,
     new_game,
     replay,
 )
@@ -94,6 +96,76 @@ def test_apply_move_does_not_mutate_input():
     g = new_game()
     apply_move(g, "X", 0, 0)
     assert g.version == 0 and g.board[0][0] is None
+
+
+# --- legal_moves / completes_line (used by the computer opponent) -----------
+
+
+def test_legal_moves_lists_empty_cells_in_row_major_order():
+    assert legal_moves(new_game()) == tuple((r, c) for r in range(3) for c in range(3))
+    g = play(new_game(), [(1, 1), (0, 2)])
+    assert legal_moves(g) == ((0, 0), (0, 1), (1, 0), (1, 2), (2, 0), (2, 1), (2, 2))
+
+
+def test_legal_moves_on_a_non_square_board():
+    assert len(legal_moves(new_game(3, 5, 3))) == 15
+
+
+def test_legal_moves_is_empty_once_the_game_is_over():
+    won = play(new_game(), X_WINS["row0"][0])
+    assert legal_moves(won) == ()
+    assert legal_moves(play(new_game(), DRAW)) == ()
+
+
+def test_every_legal_move_is_accepted_by_apply_move():
+    g = play(new_game(), [(0, 0), (1, 1), (2, 2)])
+    for row, col in legal_moves(g):
+        assert apply_move(g, g.next_player, row, col).version == g.version + 1
+
+
+# X holds two cells of each line, the third (gap) completes it; O's marks are elsewhere.
+COMPLETING = {
+    "row": ([(1, 0), (0, 0), (1, 1), (0, 1)], (1, 2)),
+    "column": ([(0, 1), (0, 0), (1, 1), (0, 2)], (2, 1)),
+    "diagonal": ([(0, 0), (0, 1), (1, 1), (0, 2)], (2, 2)),
+    "anti-diagonal": ([(0, 2), (0, 0), (1, 1), (0, 1)], (2, 0)),
+}
+
+
+@pytest.mark.parametrize("name", COMPLETING)
+def test_completes_line_in_every_direction(name):
+    moves, gap = COMPLETING[name]
+    g = play(new_game(), moves)  # X to move
+    assert completes_line(g, "X", *gap)
+    assert not completes_line(g, "O", *gap)  # O has nothing there
+
+
+def test_completes_line_ignores_whose_turn_it_is():
+    # X is to move, but O (not to move) threatens two in a row on row 0.
+    g = play(new_game(), [(1, 1), (0, 0), (2, 2), (0, 1)])
+    assert g.next_player == "X"
+    assert completes_line(g, "O", 0, 2) and not completes_line(g, "X", 0, 2)
+
+
+def test_completes_line_is_false_for_occupied_off_board_and_non_completing_cells():
+    g = play(new_game(), [(0, 0), (1, 1), (0, 1)])
+    assert not completes_line(g, "X", 0, 0)  # occupied
+    assert not completes_line(g, "X", -1, 0) and not completes_line(g, "X", 0, 3)
+    assert not completes_line(g, "X", 2, 2)  # empty but completes nothing
+    assert completes_line(g, "X", 0, 2)
+
+
+def test_completes_line_is_false_for_an_occupied_cell_even_if_it_would_complete_a_line():
+    # X has (0,0) and (0,1); O sits on (0,2). X "marking" it would make three in a row.
+    g = play(new_game(), [(0, 0), (0, 2), (0, 1)])
+    assert g.board[0][2] == "O"
+    assert not completes_line(g, "X", 0, 2)
+
+
+def test_completes_line_respects_k_on_larger_boards():
+    g = play(new_game(5, 5, 4), [(2, 0), (4, 0), (2, 1), (4, 1), (2, 2)])
+    assert completes_line(g, "X", 2, 3)  # four in a row with k=4
+    assert not completes_line(g, "X", 0, 0)
 
 
 # --- optimistic concurrency ---------------------------------------------------

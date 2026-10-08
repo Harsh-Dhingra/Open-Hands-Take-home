@@ -112,10 +112,7 @@ def apply_move(
     if game.board[row][col] is not None:
         raise CellTaken(f"({row}, {col}) is already taken")
 
-    board = tuple(
-        tuple(player if (r, c) == (row, col) else v for c, v in enumerate(line))
-        for r, line in enumerate(game.board)
-    )
+    board = _with_mark(game.board, player, row, col)
     moves = game.moves + (Move(len(game.moves) + 1, player, row, col),)
     line = _winning_line(board, game.k, player, row, col)
     if line:
@@ -136,12 +133,40 @@ def apply_move(
     )
 
 
+def legal_moves(game: Game) -> tuple[Cell, ...]:
+    """Empty cells in row-major order; none once the game is over."""
+    if game.status != "in_progress":
+        return ()
+    return tuple(
+        (r, c) for r, line in enumerate(game.board) for c, mark in enumerate(line) if mark is None
+    )
+
+
+def completes_line(game: Game, player: Player, row: int, col: int) -> bool:
+    """Would `player` marking this empty cell complete a line of k?
+
+    A question about the board only: whose turn it is does not matter, so a
+    caller can ask what the side *not* to move threatens. False for an
+    occupied or off-board cell.
+    """
+    if not (0 <= row < game.rows and 0 <= col < game.cols) or game.board[row][col] is not None:
+        return False
+    return bool(_winning_line(_with_mark(game.board, player, row, col), game.k, player, row, col))
+
+
 def replay(rows: int, cols: int, k: int, moves: list[Move] | tuple[Move, ...]) -> Game:
     """Rebuild state from a stored log, re-validating every move."""
     game = new_game(rows, cols, k)
     for m in moves:
         game = apply_move(game, m.player, m.row, m.col)
     return game
+
+
+def _with_mark(board: Board, player: Player, row: int, col: int) -> Board:
+    return tuple(
+        tuple(player if (r, c) == (row, col) else v for c, v in enumerate(line))
+        for r, line in enumerate(board)
+    )
 
 
 def _winning_line(board: Board, k: int, player: Player, row: int, col: int) -> tuple[Cell, ...]:

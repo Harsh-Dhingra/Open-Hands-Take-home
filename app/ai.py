@@ -14,6 +14,7 @@ a human move. Randomness comes from an injected ``random.Random``.
 from __future__ import annotations
 
 import random
+from dataclasses import dataclass
 from typing import Literal
 
 from app.engine import (
@@ -41,6 +42,56 @@ class UnsupportedBoard(InvalidConfig):
 
 def other(player: Player) -> Player:
     return "O" if player == "X" else "X"
+
+
+@dataclass(frozen=True)
+class Opponent:
+    """Who the computer is in one game; fixed when the game is created."""
+
+    computer_player: Player
+    difficulty: Difficulty
+
+    @property
+    def human_player(self) -> Player:
+        return other(self.computer_player)
+
+
+# --- one turn against the computer --------------------------------------------------
+#
+# A turn is the human's move plus the computer's reply. Both are applied to the
+# same in-memory Game by the caller's atomic update, so a stored game never
+# waits on the computer.
+
+
+def computer_reply(game: Game, opponent: Opponent, rng: random.Random) -> Game:
+    """Play the computer's move if the game is unfinished and it is the computer's turn."""
+    if game.status == "in_progress" and game.next_player == opponent.computer_player:
+        row, col = choose_move(game, opponent.difficulty, rng)
+        return apply_move(game, opponent.computer_player, row, col)
+    return game
+
+
+def play_turn(
+    game: Game,
+    opponent: Opponent,
+    player: Player,
+    row: int,
+    col: int,
+    expected_version: int | None,
+    rng: random.Random,
+) -> Game:
+    """Apply a human move through the engine, then the computer's reply.
+
+    The human move is validated exactly like any other (staleness first, then
+    turn, bounds, occupancy). If it is rejected nothing else happens, so a bad
+    or stale request never makes the computer move.
+    """
+    return computer_reply(apply_move(game, player, row, col, expected_version), opponent, rng)
+
+
+def open_game(opponent: Opponent, rng: random.Random) -> Game:
+    """A new game; when the computer plays X it makes the opening move."""
+    return computer_reply(new_game(), opponent, rng)
 
 
 def choose_move(game: Game, difficulty: Difficulty, rng: random.Random) -> Cell:

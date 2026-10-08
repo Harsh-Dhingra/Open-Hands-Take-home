@@ -19,6 +19,24 @@
       </form>
     </section>
 
+    <fieldset id="opponent-config" class="role">
+      <legend>Opponent</legend>
+      <label>Play against
+        <select id="opponent">
+          <option value="human">Another person</option>
+          <option value="computer">Computer</option>
+        </select>
+      </label>
+      <label>Difficulty
+        <select id="difficulty" disabled>
+          <option value="easy">Easy</option>
+          <option value="medium" selected>Medium</option>
+          <option value="hard">Hard</option>
+        </select>
+      </label>
+      <p id="opponent-hint" class="hint"></p>
+    </fieldset>
+
     <fieldset id="board-config" class="role">
       <legend>Board</legend>
       <label>Rows <input id="cfg-rows" type="number" inputmode="numeric" class="num"></label>

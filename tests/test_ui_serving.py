@@ -42,7 +42,7 @@ def test_ui_contains_no_game_rules():
     from pathlib import Path
 
     js = (Path(__file__).parent.parent / "app" / "static" / "app.js").read_text()
-    for forbidden in ("winLines", "checkWin", "isDraw", "[0, 1, 2]"):
+    for forbidden in ("winLines", "checkWin", "isDraw", "[0, 1, 2]", "minimax", "Math.random"):
         assert forbidden not in js
 
 
@@ -51,3 +51,10 @@ def test_page_has_board_config_inputs_and_reads_limits_from_the_server(client):
     for field in ("cfg-rows", "cfg-cols", "cfg-k"):
         assert f'id="{field}"' in page
     assert "/config" in client.get("/app.js").text
+
+
+def test_page_offers_the_computer_opponent_controls(client):
+    page = client.get("/").text
+    assert 'id="opponent"' in page and 'id="difficulty"' in page
+    for level in ("easy", "medium", "hard"):
+        assert f'value="{level}"' in page

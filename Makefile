@@ -13,6 +13,7 @@ format:
 
 test:
 	uv run pytest --cov --cov-branch --cov-report=term-missing
+	uv run coverage report --include=app/engine.py --fail-under=100
 
 # Available from M2 onwards (app.api does not exist yet).
 run:

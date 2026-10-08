@@ -151,9 +151,12 @@ def test_config_endpoint_publishes_defaults_and_limits(client):
 # --- fuzz: random request bodies never crash the server -------------------------
 
 _scalar = st.one_of(
-    st.integers(-(10**15), 10**15), st.floats(allow_nan=False), st.booleans(), st.none(),
+    st.integers(-(10**15), 10**15),
+    st.floats(allow_nan=False, allow_infinity=False),  # JSON cannot carry nan/inf
+    st.booleans(),
+    st.none(),
     st.text(max_size=5),
-)  # fmt: skip
+)
 _body = st.dictionaries(st.sampled_from(["rows", "cols", "k", "extra"]), _scalar, max_size=4)
 
 

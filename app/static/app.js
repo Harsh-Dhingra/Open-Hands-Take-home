@@ -11,6 +11,8 @@ let pollTimer = null;
 let prevBoard = null; // for the pop animation on newly placed marks
 
 const CFG = { rows: $("#cfg-rows"), cols: $("#cfg-cols"), k: $("#cfg-k") };
+const OPPONENT = $("#opponent");
+const DIFFICULTY = $("#difficulty");
 
 // --- helpers ---------------------------------------------------------------
 
@@ -38,6 +40,10 @@ function setRole(role) {
   const radio = document.querySelector(`input[name="role"][value="${role}"]`);
   if (radio) radio.checked = true;
 }
+const otherSide = (side) => (side === "X" ? "O" : "X");
+// Against the computer the human always plays the side the computer does not.
+const humanSide = (opponent) => otherSide(opponent.computer_player);
+const LEVELS = { easy: "Easy", medium: "Medium", hard: "Hard" };
 function showError(message) { $("#error").textContent = message || ""; }
 function clearOfflineNotice() {
   if ($("#error").textContent === OFFLINE_MESSAGE) showError("");
@@ -46,6 +52,12 @@ function clearOfflineNotice() {
 // --- rendering -------------------------------------------------------------
 
 function statusText(s) {
+  if (s.opponent) {
+    const me = humanSide(s.opponent);
+    if (s.status === "won") return s.winner === me ? "You win!" : "The computer wins.";
+    if (s.status === "draw") return "It's a draw.";
+    return `Your turn (${me})`;
+  }
   if (s.status === "won") return `${s.winner} wins!`;
   if (s.status === "draw") return "It's a draw.";
   const role = selectedRole();
@@ -57,7 +69,8 @@ function render() {
   const s = state;
   const board = $("#board");
   board.style.setProperty("--cols", s.cols);
-  $("#rules").textContent = `${s.rows}×${s.cols} board · ${s.k} in a row to win`;
+  const versus = s.opponent ? ` · vs Computer (${LEVELS[s.opponent.difficulty]})` : "";
+  $("#rules").textContent = `${s.rows}×${s.cols} board · ${s.k} in a row to win${versus}`;
   board.dataset.next = s.next_player || "";
   const win = new Set(s.winning_line.map(([r, c]) => `${r},${c}`));
 
@@ -94,12 +107,17 @@ function render() {
 function show(id, s) {
   gameId = id;
   state = s;
+  if (s.opponent) setRole(humanSide(s.opponent)); // the side is fixed by who the computer is
   render();
   watch(id, s);
 }
 
 // Only fields the user filled in are sent; the server applies defaults and validates ranges.
 function configBody() {
+  if (OPPONENT.value === "computer") {
+    // The computer plays 3x3 only, so no board fields; the server applies the defaults.
+    return { opponent: "computer", difficulty: DIFFICULTY.value, human_plays: selectedRole() };
+  }
   const body = {};
   for (const [name, input] of Object.entries(CFG)) {
     if (input.value !== "") body[name] = Number(input.value);
@@ -108,6 +126,25 @@ function configBody() {
 }
 
 let limits = null;
+let boardDefaults = null;
+
+// Controls for a new game: the computer only plays the default board, and there is
+// no "both sides on one screen" against it. Hints only; the server validates.
+function syncOpponentControls() {
+  const computer = OPPONENT.value === "computer";
+  DIFFICULTY.disabled = !computer;
+  for (const input of Object.values(CFG)) input.disabled = computer;
+  if (computer && boardDefaults) {
+    for (const name of ["rows", "cols", "k"]) CFG[name].value = boardDefaults[name];
+    syncHint();
+  }
+  const both = document.querySelector('input[name="role"][value="both"]');
+  both.disabled = computer;
+  if (computer && both.checked) setRole("X");
+  $("#opponent-hint").textContent = computer
+    ? "The computer plays 3×3 only. Choose O to let it open."
+    : "";
+}
 
 // Hint only: the server stays the authority and still returns invalid_config for bad input.
 function syncHint() {
@@ -133,6 +170,7 @@ async function loadLimits() {
     }
     CFG.k.min = limits.min_k;
     CFG.k.value = defaults.k;
+    boardDefaults = defaults;
     syncHint();
   } catch (e) {
     showError(e.message);
@@ -161,6 +199,7 @@ async function loadGame(id) {
   try {
     const s = await api(`/games/${encodeURIComponent(id)}`);
     // A newcomer to a shared link defaults to O; the creator's tab remembers X.
+    // (Against the computer, show() overrides this with the human's side.)
     setRole(store((st) => st.getItem(roleKey(id))) || "O");
     prevBoard = null;
     show(s.id, s);
@@ -176,7 +215,8 @@ async function play(row, col) {
   moving = true;
   showError("");
   const role = selectedRole();
-  const player = role === "both" ? state.next_player : role;
+  let player = role === "both" ? state.next_player : role;
+  if (state.opponent) player = humanSide(state.opponent);
   try {
     show(gameId, await api(`/games/${gameId}/moves`, {
       method: "POST",
@@ -264,6 +304,7 @@ function watch(id, s) {
 // --- wiring ----------------------------------------------------------------
 
 $("#new-game").addEventListener("click", newGame);
+OPPONENT.addEventListener("change", syncOpponentControls);
 CFG.rows.addEventListener("input", syncHint);
 CFG.cols.addEventListener("input", syncHint);
 

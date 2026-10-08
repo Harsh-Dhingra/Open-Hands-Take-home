@@ -106,6 +106,7 @@ async def game_event_stream(
     keep proxies from closing the stream and re-reads the repository, so a
     change made in another worker process still arrives, just a little later.
     """
+    opponent = await run_in_threadpool(repo.opponent_of, game_id)  # fixed for the game's life
     sub = broker.subscribe(game_id)
     last_sent = last_event_id
     try:
@@ -113,7 +114,7 @@ async def game_event_stream(
             sub.wakeup.clear()
             game = await run_in_threadpool(repo.get, game_id)
             if game.version != last_sent:
-                payload = game_out(game_id, game).model_dump_json()
+                payload = game_out(game_id, game, opponent).model_dump_json()
                 yield sse_message("state", payload, event_id=game.version)
                 last_sent = game.version
             if game.status != "in_progress":

@@ -1,6 +1,6 @@
 # Plan.md — Tic-Tac-Toe with a Real Backend
 
-**Status:** M0–M5, B1 (configurable board) and B2-I (optimistic concurrency) and B2-II (SSE live updates) complete (see git history). B3–B5 not started.
+**Status:** M0–M5, B1 (configurable board) and B2-I (optimistic concurrency) and B2-II (SSE live updates) and B5 (computer opponent: Easy/Medium/Hard minimax) complete (see git history). B3 and B4 not started.
 
 ## 1. Objectives & Definition of Success
 

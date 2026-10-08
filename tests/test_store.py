@@ -2,7 +2,15 @@ import threading
 
 import pytest
 
-from app.engine import CellTaken, InvalidConfig, StaleVersion, apply_move
+from app.ai import Opponent
+from app.engine import (
+    CellTaken,
+    InvalidConfig,
+    Move,
+    NotYourTurn,
+    StaleVersion,
+    apply_move,
+)
 from app.store import GameNotFound
 
 
@@ -107,3 +115,51 @@ def test_chained_versions_apply_in_order(repo):
         )
         assert game.version == i + 1
     assert repo.get(gid) == game
+
+
+# --- computer opponent and opening moves -----------------------------------------
+
+
+def test_opponent_round_trips_and_human_games_have_none(repo):
+    vs_computer, _ = repo.create(opponent=Opponent("O", "hard"))
+    vs_human, _ = repo.create()
+    assert repo.opponent_of(vs_computer) == Opponent("O", "hard")
+    assert repo.opponent_of(vs_human) is None
+
+
+def test_opponent_of_unknown_game_raises(repo):
+    with pytest.raises(GameNotFound):
+        repo.opponent_of("missing")
+
+
+def test_opponent_survives_updates(repo):
+    gid, _ = repo.create(opponent=Opponent("X", "easy"))
+    repo.update(gid, lambda g: apply_move(g, "X", 0, 0))
+    assert repo.opponent_of(gid) == Opponent("X", "easy")
+
+
+def test_create_with_opening_moves_stores_them_as_the_games_log(repo):
+    opening = (Move(1, "X", 1, 1),)
+    gid, game = repo.create(opponent=Opponent("X", "hard"), moves=opening)
+    assert game.version == 1 and game.next_player == "O" and game.board[1][1] == "X"
+    assert repo.get(gid) == game
+    assert [(m.n, m.player, m.row, m.col) for m in repo.get(gid).moves] == [(1, "X", 1, 1)]
+
+
+@pytest.mark.parametrize(
+    "bad_moves,error",
+    [
+        ((Move(1, "O", 0, 0),), NotYourTurn),  # O cannot open
+        ((Move(1, "X", 0, 0), Move(2, "O", 0, 0)), CellTaken),
+    ],
+)
+def test_an_illegal_opening_creates_nothing(repo, bad_moves, error):
+    with pytest.raises(error):
+        repo.create(opponent=Opponent("X", "hard"), moves=bad_moves)
+    assert repo.list() == []
+
+
+def test_an_invalid_config_with_opponent_creates_nothing(repo):
+    with pytest.raises(InvalidConfig):
+        repo.create(3, 3, 9, opponent=Opponent("O", "hard"))
+    assert repo.list() == []

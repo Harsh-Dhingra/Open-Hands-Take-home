@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
+from app.ai import Difficulty, Opponent
 from app.engine import Game, Move, Player
 from app.limits import DEFAULT_COLS, DEFAULT_K, DEFAULT_ROWS
 
@@ -18,6 +19,11 @@ class CreateGameRequest(BaseModel):
     rows: StrictInt = DEFAULT_ROWS
     cols: StrictInt = DEFAULT_COLS
     k: StrictInt = DEFAULT_K
+    # Playing the computer (3x3 only): which level, and which side the human takes.
+    # None means "not given" so the API can tell a default from a misplaced field.
+    opponent: Literal["human", "computer"] = "human"
+    difficulty: Difficulty | None = None
+    human_plays: Player | None = None
 
 
 class MoveRequest(BaseModel):
@@ -35,6 +41,12 @@ class MoveOut(BaseModel):
     col: int
 
 
+class OpponentOut(BaseModel):
+    type: Literal["computer"] = "computer"
+    difficulty: Difficulty
+    computer_player: Player
+
+
 class GameOut(BaseModel):
     id: str
     rows: int
@@ -46,6 +58,7 @@ class GameOut(BaseModel):
     winner: Player | None
     winning_line: list[tuple[int, int]]
     version: int
+    opponent: OpponentOut | None = None  # None: human vs human
 
 
 class GameSummary(BaseModel):
@@ -55,6 +68,7 @@ class GameSummary(BaseModel):
     k: int
     status: Literal["in_progress", "won", "draw"]
     version: int
+    opponent: OpponentOut | None = None
 
 
 class ConfigDefaults(BaseModel):
@@ -84,7 +98,13 @@ class ErrorOut(BaseModel):
     error: ErrorDetail
 
 
-def game_out(game_id: str, game: Game) -> GameOut:
+def opponent_out(opponent: Opponent | None) -> OpponentOut | None:
+    if opponent is None:
+        return None
+    return OpponentOut(difficulty=opponent.difficulty, computer_player=opponent.computer_player)
+
+
+def game_out(game_id: str, game: Game, opponent: Opponent | None = None) -> GameOut:
     return GameOut(
         id=game_id,
         rows=game.rows,
@@ -96,6 +116,7 @@ def game_out(game_id: str, game: Game) -> GameOut:
         winner=game.winner,
         winning_line=list(game.winning_line),
         version=game.version,
+        opponent=opponent_out(opponent),
     )
 
 

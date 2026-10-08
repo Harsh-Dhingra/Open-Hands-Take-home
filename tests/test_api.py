@@ -69,8 +69,24 @@ def test_list_games_newest_first(client):
     a, b = new_game(client), new_game(client)
     move(client, a, "X", 0, 0)
     assert client.get("/games").json() == [
-        {"id": b, "rows": 3, "cols": 3, "k": 3, "status": "in_progress", "version": 0},
-        {"id": a, "rows": 3, "cols": 3, "k": 3, "status": "in_progress", "version": 1},
+        {
+            "id": b,
+            "rows": 3,
+            "cols": 3,
+            "k": 3,
+            "status": "in_progress",
+            "version": 0,
+            "opponent": None,
+        },
+        {
+            "id": a,
+            "rows": 3,
+            "cols": 3,
+            "k": 3,
+            "status": "in_progress",
+            "version": 1,
+            "opponent": None,
+        },
     ]
 
 

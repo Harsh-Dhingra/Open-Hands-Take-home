@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import random
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
@@ -11,9 +12,9 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from app import engine
+from app import ai, engine
 from app.events import EventBroker, EventStreamResponse, game_event_stream, parse_last_event_id
-from app.limits import describe, validate_config
+from app.limits import describe, validate_config, validate_opponent
 from app.models import (
     ConfigOut,
     CreateGameRequest,
@@ -24,6 +25,7 @@ from app.models import (
     MoveRequest,
     game_out,
     move_out,
+    opponent_out,
 )
 from app.store import GameNotFound, GameRepository, SqliteRepository
 
@@ -46,17 +48,29 @@ ERROR_RESPONSES = {
 }
 
 
+class ExpectedVersionRequired(Exception):
+    """A move in a game against the computer must say which version it is based on.
+
+    The turn passes back to the human as soon as the computer has replied, so
+    without it a retried request would be accepted as one more human move.
+    """
+
+
 def _error(status: int, code: str, message: str, **extra: int) -> JSONResponse:
     detail = {"code": code, "message": message, **extra}
     return JSONResponse(status_code=status, content={"error": detail})
 
 
 def create_app(
-    repo: GameRepository | None = None, keepalive_seconds: float | None = None
+    repo: GameRepository | None = None,
+    keepalive_seconds: float | None = None,
+    rng: random.Random | None = None,
 ) -> FastAPI:
     repo = repo or SqliteRepository(os.environ.get("DB_PATH", "tictactoe.db"))
     if keepalive_seconds is None:
         keepalive_seconds = float(os.environ.get("SSE_KEEPALIVE_SECONDS", "5"))
+    rng = rng or random.Random()  # tests inject a seeded one for reproducible computer moves
+    ai.warm_up()  # solve the game once now, never inside a request's write lock
     broker = EventBroker()
     app = FastAPI(title="Tic-Tac-Toe")
     app.state.broker = broker
@@ -68,6 +82,14 @@ def create_app(
         stale = isinstance(exc, engine.StaleVersion)
         extra = {"current_version": exc.current_version} if stale else {}
         return _error(STATUS_BY_CODE[code], code, str(exc), **extra)
+
+    @app.exception_handler(ExpectedVersionRequired)
+    async def expected_version_required(_: Request, exc: Exception) -> JSONResponse:
+        return _error(
+            422,
+            "validation_error",
+            "expected_version: required for a game against the computer",
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -87,29 +109,55 @@ def create_app(
     def create_game(response: Response, req: CreateGameRequest | None = None) -> GameOut:
         req = req or CreateGameRequest()  # no body == all defaults (3x3, k=3)
         validate_config(req.rows, req.cols, req.k)  # before anything is allocated
-        game_id, game = repo.create(req.rows, req.cols, req.k)
+        validate_opponent(req.rows, req.cols, req.k, req.opponent, req.difficulty, req.human_plays)
+        opponent, opening = None, ()
+        if req.opponent == "computer":
+            human = req.human_plays or "X"
+            opponent = ai.Opponent(ai.other(human), req.difficulty or "medium")
+            opening = ai.open_game(opponent, rng).moves  # the computer opens when it is X
+        game_id, game = repo.create(req.rows, req.cols, req.k, opponent, opening)
         response.headers["Location"] = f"/games/{game_id}"
-        return game_out(game_id, game)
+        return game_out(game_id, game, opponent)
 
     @app.get("/games", response_model=list[GameSummary])
     def list_games() -> list[GameSummary]:
         return [
-            GameSummary(id=i, rows=g.rows, cols=g.cols, k=g.k, status=g.status, version=g.version)
+            GameSummary(
+                id=i,
+                rows=g.rows,
+                cols=g.cols,
+                k=g.k,
+                status=g.status,
+                version=g.version,
+                opponent=opponent_out(repo.opponent_of(i)),
+            )
             for i, g in repo.list()
         ]
 
     @app.get("/games/{game_id}", response_model=GameOut, responses=ERROR_RESPONSES)
     def get_game(game_id: str) -> GameOut:
-        return game_out(game_id, repo.get(game_id))
+        return game_out(game_id, repo.get(game_id), repo.opponent_of(game_id))
 
     @app.post("/games/{game_id}/moves", response_model=GameOut, responses=ERROR_RESPONSES)
     def make_move(game_id: str, req: MoveRequest) -> GameOut:
-        game = repo.update(
-            game_id,
-            lambda g: engine.apply_move(g, req.player, req.row, req.col, req.expected_version),
-        )
-        broker.publish(game_id)  # only after the move is saved
-        return game_out(game_id, game)
+        opponent = repo.opponent_of(game_id)  # fixed for the game's life, so safe to read first
+        if opponent is None:
+            game = repo.update(
+                game_id,
+                lambda g: engine.apply_move(g, req.player, req.row, req.col, req.expected_version),
+            )
+        else:
+            if req.expected_version is None:
+                raise ExpectedVersionRequired
+            # The human move and the computer's reply are one atomic update.
+            game = repo.update(
+                game_id,
+                lambda g: ai.play_turn(
+                    g, opponent, req.player, req.row, req.col, req.expected_version, rng
+                ),
+            )
+        broker.publish(game_id)  # only after the turn is saved
+        return game_out(game_id, game, opponent)
 
     @app.get("/games/{game_id}/moves", response_model=list[MoveOut], responses=ERROR_RESPONSES)
     def get_moves(game_id: str) -> list[MoveOut]:

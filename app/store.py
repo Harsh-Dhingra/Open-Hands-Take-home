@@ -9,12 +9,14 @@ from __future__ import annotations
 import secrets
 import sqlite3
 import threading
-from collections.abc import Callable, Iterator
+import time
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Protocol
 
-from app.engine import EngineError, Game, Move, new_game, replay
+from app.ai import Opponent
+from app.engine import EngineError, Game, Move, replay
 from app.limits import DEFAULT_COLS, DEFAULT_K, DEFAULT_ROWS
 
 
@@ -30,8 +32,23 @@ class CorruptGame(Exception):
 
 class GameRepository(Protocol):
     def create(
-        self, rows: int = DEFAULT_ROWS, cols: int = DEFAULT_COLS, k: int = DEFAULT_K
-    ) -> tuple[str, Game]: ...
+        self,
+        rows: int = DEFAULT_ROWS,
+        cols: int = DEFAULT_COLS,
+        k: int = DEFAULT_K,
+        opponent: Opponent | None = None,
+        moves: Sequence[Move] = (),
+    ) -> tuple[str, Game]:
+        """Store a new game, optionally against the computer and with opening moves.
+
+        The moves are replayed through the engine first (an illegal log is
+        rejected), and the game and its moves are saved all-or-nothing.
+        """
+        ...
+
+    def opponent_of(self, game_id: str) -> Opponent | None:
+        """The computer opponent, or None for a human-vs-human game. Immutable."""
+        ...
 
     def get(self, game_id: str) -> Game: ...
 
@@ -50,18 +67,30 @@ class GameRepository(Protocol):
 class InMemoryRepository:
     def __init__(self) -> None:
         self._games: dict[str, Game] = {}
+        self._opponents: dict[str, Opponent] = {}
         self._lock = threading.Lock()
 
     def create(
-        self, rows: int = DEFAULT_ROWS, cols: int = DEFAULT_COLS, k: int = DEFAULT_K
+        self,
+        rows: int = DEFAULT_ROWS,
+        cols: int = DEFAULT_COLS,
+        k: int = DEFAULT_K,
+        opponent: Opponent | None = None,
+        moves: Sequence[Move] = (),
     ) -> tuple[str, Game]:
-        game = new_game(rows, cols, k)
+        game = replay(rows, cols, k, moves)  # validates the config and every move first
         with self._lock:
             game_id = secrets.token_hex(4)
             while game_id in self._games:  # pragma: no cover - 32-bit collision
                 game_id = secrets.token_hex(4)
             self._games[game_id] = game
+            if opponent is not None:
+                self._opponents[game_id] = opponent
         return game_id, game
+
+    def opponent_of(self, game_id: str) -> Opponent | None:
+        self.get(game_id)  # unknown game -> GameNotFound
+        return self._opponents.get(game_id)
 
     def get(self, game_id: str) -> Game:
         try:
@@ -80,12 +109,21 @@ class InMemoryRepository:
             return list(reversed(self._games.items()))
 
 
-_SCHEMA = """
+# Opponent columns are NULL for human-vs-human games. They were added after the
+# first release, so a database created earlier gets them through _migrate().
+_OPPONENT_COLUMNS = {
+    "computer_player": "TEXT CHECK (computer_player IN ('X', 'O'))",
+    "difficulty": "TEXT CHECK (difficulty IN ('easy', 'medium', 'hard'))",
+}
+
+_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS games (
     id     TEXT PRIMARY KEY,
     n_rows INTEGER NOT NULL,
     n_cols INTEGER NOT NULL,
-    k      INTEGER NOT NULL
+    k      INTEGER NOT NULL,
+    computer_player {_OPPONENT_COLUMNS["computer_player"]},
+    difficulty {_OPPONENT_COLUMNS["difficulty"]}
 );
 CREATE TABLE IF NOT EXISTS moves (
     game_id TEXT    NOT NULL REFERENCES games(id),
@@ -110,9 +148,38 @@ class SqliteRepository:
     def __init__(self, path: str | Path) -> None:
         self._path = str(path)
         Path(self._path).parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.executescript(_SCHEMA)
+        self._initialise()
+
+    def _initialise(self) -> None:
+        # Switching a fresh database to WAL needs an exclusive lock that SQLite's
+        # busy timeout does not always wait for, so several processes starting on
+        # the same file at once can see "database is locked". Retry briefly.
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                with self._connect() as conn:
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.executescript(_SCHEMA)
+                    self._migrate(conn)
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc) or time.monotonic() > deadline:
+                    raise
+                time.sleep(0.02)
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """Add columns a database created by an older version lacks. Idempotent."""
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(games)")}
+        for name, definition in _OPPONENT_COLUMNS.items():
+            if name in existing:
+                continue
+            try:
+                conn.execute(f"ALTER TABLE games ADD COLUMN {name} {definition}")
+            except sqlite3.OperationalError as exc:
+                # Another process migrated between our check and our ALTER.
+                if "duplicate column" not in str(exc):
+                    raise
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -125,20 +192,56 @@ class SqliteRepository:
             conn.close()
 
     def create(
-        self, rows: int = DEFAULT_ROWS, cols: int = DEFAULT_COLS, k: int = DEFAULT_K
+        self,
+        rows: int = DEFAULT_ROWS,
+        cols: int = DEFAULT_COLS,
+        k: int = DEFAULT_K,
+        opponent: Opponent | None = None,
+        moves: Sequence[Move] = (),
     ) -> tuple[str, Game]:
-        game = new_game(rows, cols, k)
+        game = replay(rows, cols, k, moves)  # validates the config and every move first
         with self._connect() as conn:
-            while True:
-                game_id = secrets.token_hex(4)
-                try:
-                    conn.execute(
-                        "INSERT INTO games (id, n_rows, n_cols, k) VALUES (?, ?, ?, ?)",
-                        (game_id, game.rows, game.cols, game.k),
-                    )
-                    return game_id, game
-                except sqlite3.IntegrityError:  # pragma: no cover - 32-bit collision
-                    continue
+            conn.execute("BEGIN IMMEDIATE")  # the game and its opening moves: all or nothing
+            try:
+                game_id = self._insert_game(conn, game, opponent)
+                self._insert_moves(conn, game_id, game.moves)
+                conn.execute("COMMIT")
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+        return game_id, game
+
+    @staticmethod
+    def _insert_game(conn: sqlite3.Connection, game: Game, opponent: Opponent | None) -> str:
+        values = (game.rows, game.cols, game.k)
+        values += (opponent.computer_player, opponent.difficulty) if opponent else (None, None)
+        while True:
+            game_id = secrets.token_hex(4)
+            try:
+                conn.execute(
+                    "INSERT INTO games (id, n_rows, n_cols, k, computer_player, difficulty)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (game_id, *values),
+                )
+                return game_id
+            except sqlite3.IntegrityError:  # pragma: no cover - 32-bit collision
+                continue
+
+    @staticmethod
+    def _insert_moves(conn: sqlite3.Connection, game_id: str, moves: Sequence[Move]) -> None:
+        conn.executemany(
+            "INSERT INTO moves (game_id, n, player, row_idx, col_idx) VALUES (?, ?, ?, ?, ?)",
+            [(game_id, m.n, m.player, m.row, m.col) for m in moves],
+        )
+
+    def opponent_of(self, game_id: str) -> Opponent | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT computer_player, difficulty FROM games WHERE id = ?", (game_id,)
+            ).fetchone()
+        if row is None:
+            raise GameNotFound(game_id)
+        return Opponent(*row) if row[0] is not None else None
 
     def get(self, game_id: str) -> Game:
         with self._connect() as conn:
@@ -152,14 +255,7 @@ class SqliteRepository:
             try:
                 before = self._load(conn, game_id)
                 after = fn(before)
-                conn.executemany(
-                    "INSERT INTO moves (game_id, n, player, row_idx, col_idx)"
-                    " VALUES (?, ?, ?, ?, ?)",
-                    [
-                        (game_id, m.n, m.player, m.row, m.col)
-                        for m in after.moves[len(before.moves) :]
-                    ],
-                )
+                self._insert_moves(conn, game_id, after.moves[len(before.moves) :])
                 conn.execute("COMMIT")
             except BaseException:
                 conn.execute("ROLLBACK")

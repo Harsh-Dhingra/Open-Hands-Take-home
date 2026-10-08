@@ -21,7 +21,7 @@ h1 { margin: 0 0 16px; font-size: 1.6rem; text-align: center; }
 .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 #join-form { display: flex; gap: 6px; flex: 1; min-width: 180px; }
 #join-form input { flex: 1; min-width: 0; }
-button, input {
+button, input, select {
   font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line);
   border-radius: 8px; padding: 8px 12px;
 }

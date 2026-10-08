@@ -77,6 +77,10 @@ class Stream:
     """Drives the ASGI app directly so a stream can be read, then disconnected."""
 
     def __init__(self, app, path, headers=None, spec_version="2.3"):
+        # Servers speaking ASGI spec >= 2.4 make send() fail after a disconnect; older
+        # ones just discard it. Mirror that, or a keepalive in flight when the test
+        # disconnects would raise in a harness that models the older behaviour.
+        self._send_fails_after_disconnect = tuple(map(int, spec_version.split("."))) >= (2, 4)
         self.chunks: asyncio.Queue[str] = asyncio.Queue()
         self.disconnected = asyncio.Event()
         scope = {
@@ -94,7 +98,9 @@ class Stream:
 
     async def _send(self, message):
         if self.disconnected.is_set():
-            raise OSError("client went away")  # what servers do for ASGI spec >= 2.4
+            if self._send_fails_after_disconnect:
+                raise OSError("client went away")
+            return
         if message["type"] == "http.response.body" and message.get("body"):
             await self.chunks.put(message["body"].decode())
 

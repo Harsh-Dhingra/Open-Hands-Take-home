@@ -27,6 +27,7 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = ["slow: starts a real server subprocess"]
 
 [tool.coverage.run]
 branch = true

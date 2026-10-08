@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from app.engine import Game, Move, Player
 from app.limits import DEFAULT_COLS, DEFAULT_K, DEFAULT_ROWS
@@ -24,6 +24,8 @@ class MoveRequest(BaseModel):
     player: Player
     row: StrictInt
     col: StrictInt
+    # The game version the client last saw; omit (or null) to skip the check.
+    expected_version: Annotated[StrictInt, Field(ge=0)] | None = None
 
 
 class MoveOut(BaseModel):
@@ -75,6 +77,7 @@ class ConfigOut(BaseModel):
 class ErrorDetail(BaseModel):
     code: str
     message: str
+    current_version: int | None = None  # only on stale_version
 
 
 class ErrorOut(BaseModel):

@@ -9,6 +9,8 @@ let state = null;
 let pollTimer = null;
 let prevBoard = null; // for the pop animation on newly placed marks
 
+const CFG = { rows: $("#cfg-rows"), cols: $("#cfg-cols"), k: $("#cfg-k") };
+
 // --- helpers ---------------------------------------------------------------
 
 async function api(path, options) {
@@ -50,7 +52,8 @@ function statusText(s) {
 function render() {
   const s = state;
   const board = $("#board");
-  board.style.setProperty("--size", s.cols);
+  board.style.setProperty("--cols", s.cols);
+  $("#rules").textContent = `${s.rows}×${s.cols} board · ${s.k} in a row to win`;
   board.dataset.next = s.next_player || "";
   const win = new Set(s.winning_line.map(([r, c]) => `${r},${c}`));
 
@@ -91,10 +94,38 @@ function show(id, s) {
   s.status === "in_progress" ? startPolling() : stopPolling();
 }
 
+// Only fields the user filled in are sent; the server applies defaults and validates ranges.
+function configBody() {
+  const body = {};
+  for (const [name, input] of Object.entries(CFG)) {
+    if (input.value !== "") body[name] = Number(input.value);
+  }
+  return body;
+}
+
+async function loadLimits() {
+  try {
+    const { defaults, limits } = await api("/config");
+    for (const name of ["rows", "cols"]) {
+      CFG[name].min = limits.min_size;
+      CFG[name].max = limits.max_size;
+      CFG[name].value = defaults[name];
+    }
+    CFG.k.min = limits.min_k;
+    CFG.k.value = defaults.k;
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
 async function newGame() {
   showError("");
   try {
-    const s = await api("/games", { method: "POST" });
+    const s = await api("/games", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(configBody()),
+    });
     store((st) => st.setItem(roleKey(s.id), selectedRole()));
     history.replaceState(null, "", `#${s.id}`);
     prevBoard = null;
@@ -173,4 +204,5 @@ addEventListener("hashchange", () => {
   if (id && id !== gameId) loadGame(id);
 });
 
+loadLimits();
 if (location.hash.length > 1) loadGame(location.hash.slice(1));

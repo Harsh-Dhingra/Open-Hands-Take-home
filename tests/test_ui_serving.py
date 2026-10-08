@@ -44,3 +44,10 @@ def test_ui_contains_no_game_rules():
     js = (Path(__file__).parent.parent / "app" / "static" / "app.js").read_text()
     for forbidden in ("winLines", "checkWin", "isDraw", "[0, 1, 2]"):
         assert forbidden not in js
+
+
+def test_page_has_board_config_inputs_and_reads_limits_from_the_server(client):
+    page = client.get("/").text
+    for field in ("cfg-rows", "cfg-cols", "cfg-k"):
+        assert f'id="{field}"' in page
+    assert "/config" in client.get("/app.js").text

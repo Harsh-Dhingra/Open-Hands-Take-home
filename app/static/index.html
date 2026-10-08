@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tic-Tac-Toe</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <h1>Tic-Tac-Toe</h1>
+
+    <section class="controls" aria-label="Game controls">
+      <button id="new-game" type="button" class="primary">New game</button>
+      <form id="join-form">
+        <label class="sr-only" for="join-id">Game id</label>
+        <input id="join-id" placeholder="Game id" autocomplete="off" spellcheck="false">
+        <button type="submit">Join</button>
+      </form>
+    </section>
+
+    <fieldset id="role" class="role">
+      <legend>Play as</legend>
+      <label><input type="radio" name="role" value="X" checked> X</label>
+      <label><input type="radio" name="role" value="O"> O</label>
+      <label><input type="radio" name="role" value="both"> Both (same screen)</label>
+    </fieldset>
+
+    <p id="share" class="share" hidden>
+      Share this game: <a id="share-link" href="#"></a>
+      <button id="copy" type="button" class="link">Copy link</button>
+    </p>
+
+    <div id="status" class="status" role="status" aria-live="polite">Start a new game to play.</div>
+    <div id="board" class="board" role="grid" aria-label="Game board"></div>
+    <p id="error" class="error" role="alert"></p>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -166,5 +166,8 @@ _Screenshots and the recording will be added here._
 I used **Claude Code** (Claude Sonnet 5.5) in the Claude desktop app, working **plan first**: it drafted `Plan.md` (scope, architecture, milestones, test strategy) and a short plan for each feature, which I approved or changed before any code, then built one milestone per branch in small commits (`git log` shows the order). To review its output I leaned on **mutation checks**, **exhaustive and oracle-based tests** instead of hand-picked cases, and driving the **real UI in a browser**; several real bugs were found that way and fixed (a database startup race, event streams that leaked on disconnect, a server that would not shut down with open streams, a flaky test harness), and each is described in its commit message.
 
 ## 🔧 What didn't go as planned / what I'd improve with more time
+The scope grew beyond my initial estimate, so I left replay and Docker support in the backlog.
+Computer replies introduced a duplicate-request risk; requiring the expected game version prevented unintended extra moves.
+Database startup and streaming tests exposed a locking issue and test flakiness, both addressed during iteration.
+With more time, I’d automate browser checks for all difficulty levels, stale-board recovery and reconnect behavior.
 
-_(to be written in my own words)_

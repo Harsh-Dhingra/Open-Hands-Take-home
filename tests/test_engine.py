@@ -216,12 +216,122 @@ def test_replay_rejects_corrupt_log():
         replay(3, 3, 3, bad)
 
 
+# --- rectangular boards: all four directions -------------------------------
+
+DIRECTIONS = {"horizontal": (0, 1), "vertical": (1, 0), "diagonal": (1, 1), "anti": (1, -1)}
+BOARDS = [(3, 7, 3), (7, 3, 3), (5, 5, 4), (10, 4, 4), (4, 10, 4), (6, 9, 5)]
+
+
+def all_lines(rows, cols, k, direction):
+    dr, dc = DIRECTIONS[direction]
+    for r in range(rows):
+        for c in range(cols):
+            end_r, end_c = r + dr * (k - 1), c + dc * (k - 1)
+            if 0 <= end_r < rows and 0 <= end_c < cols:
+                yield [(r + dr * i, c + dc * i) for i in range(k)]
+
+
+def x_plays_line(rows, cols, k, line):
+    """X takes `line` in order; O plays k-1 scattered cells off the line (never enough to win)."""
+    off_line = [(r, c) for r in range(rows) for c in range(cols) if (r, c) not in line]
+    fillers = off_line[::2][: k - 1] if len(off_line[::2]) >= k - 1 else off_line[: k - 1]
+    g = new_game(rows, cols, k)
+    for i, cell in enumerate(line):
+        g = apply_move(g, "X", *cell)
+        if i < k - 1:
+            assert g.status == "in_progress", "won before the line was complete"
+            g = apply_move(g, "O", *fillers[i])
+    return g
+
+
+@pytest.mark.parametrize("direction", DIRECTIONS)
+@pytest.mark.parametrize("rows,cols,k", BOARDS)
+def test_every_line_wins_on_rectangular_boards(rows, cols, k, direction):
+    lines = list(all_lines(rows, cols, k, direction))
+    assert lines, "board has no line in this direction"
+    for line in lines:
+        g = x_plays_line(rows, cols, k, line)
+        assert g.status == "won" and g.winner == "X", line
+        assert sorted(g.winning_line) == sorted(line)
+
+
+def test_no_line_exists_vertically_when_k_exceeds_rows():
+    # 3x6 with k=6: only rows can win; a full column or diagonal of X must not.
+    assert not list(all_lines(3, 6, 6, "vertical"))
+    assert not list(all_lines(3, 6, 6, "diagonal"))
+    assert not list(all_lines(3, 6, 6, "anti"))
+    col = play(new_game(3, 6, 6), [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1)])
+    assert col.status == "in_progress"
+    row = play(
+        new_game(3, 6, 6),
+        [(1, 0), (0, 0), (1, 1), (0, 1), (1, 2), (0, 2), (1, 3), (0, 3), (1, 4), (0, 4), (1, 5)],
+    )
+    assert row.winner == "X" and row.winning_line == tuple((1, c) for c in range(6))
+
+
+@pytest.mark.parametrize("rows,cols", [(3, 5), (4, 7), (6, 9)])
+def test_a_line_does_not_wrap_from_one_row_to_the_next(rows, cols):
+    # Cells that are consecutive in a flattened array but not on the board.
+    g = play(
+        new_game(rows, cols, 3),
+        [(0, cols - 2), (rows - 1, 0), (0, cols - 1), (rows - 1, 2), (1, 0)],
+    )
+    assert g.status == "in_progress"
+    assert g.board[0][cols - 2] == g.board[0][cols - 1] == g.board[1][0] == "X"
+
+
+@pytest.mark.parametrize("rows,cols", [(3, 5), (4, 7), (6, 9)])
+def test_a_line_does_not_wrap_around_via_negative_indexes(rows, cols):
+    # X at both far-right cells of row 1 plus (1, 0): python's board[1][-1] would
+    # make these look contiguous if the scan ever stepped to column -1.
+    g = play(
+        new_game(rows, cols, 3),
+        [(1, cols - 2), (0, 0), (1, cols - 1), (0, 2), (1, 0)],
+    )
+    assert g.status == "in_progress"
+
+
+def test_overline_counts_and_reports_the_whole_run():
+    g = play(
+        new_game(3, 8, 3),
+        [(0, 0), (2, 0), (0, 1), (2, 2), (0, 3), (2, 4), (0, 4), (2, 6), (0, 2)],
+    )
+    assert g.status == "won" and g.winner == "X"
+    assert g.winning_line == tuple((0, c) for c in range(5))
+
+
+@pytest.mark.parametrize("rows,cols", [(3, 4), (4, 3)])
+def test_full_non_square_board_without_a_line_is_a_draw(rows, cols):
+    # k = the longer side; row-major play gives XOXO rows, so no k-run exists.
+    k = max(rows, cols)
+    g = play(new_game(rows, cols, k), [(r, c) for r in range(rows) for c in range(cols)])
+    assert g.status == "draw" and g.winner is None
+    assert g.version == rows * cols and g.winning_line == ()
+
+
 # --- properties -----------------------------------------------------------
 
 
+def brute_force_winners(board, k):
+    """Independent oracle: scan every cell in every direction for k equal marks."""
+    rows, cols = len(board), len(board[0])
+    found = set()
+    for r in range(rows):
+        for c in range(cols):
+            mark = board[r][c]
+            if mark is None:
+                continue
+            for dr, dc in ((0, 1), (1, 0), (1, 1), (1, -1)):
+                end_r, end_c = r + dr * (k - 1), c + dc * (k - 1)
+                if 0 <= end_r < rows and 0 <= end_c < cols:
+                    if all(board[r + dr * i][c + dc * i] == mark for i in range(k)):
+                        found.add(mark)
+    return found
+
+
 @given(
-    st.integers(1, 5),
-    st.integers(1, 5),
+    st.integers(1, 8),
+    st.integers(1, 8),
     st.data(),
 )
 def test_random_legal_games_keep_invariants(rows, cols, data):
@@ -248,6 +358,10 @@ def test_random_legal_games_keep_invariants(rows, cols, data):
             assert g.winner is None and g.winning_line == ()
         if g.status == "draw":
             assert g.version == rows * cols
+
+        # The engine must agree with a full-board scan after every move.
+        expected = brute_force_winners(g.board, k)
+        assert expected == ({g.winner} if g.winner else set())
 
     assert g.status in ("won", "draw") or g.version < rows * cols
     assert replay(rows, cols, k, g.moves) == g

@@ -17,4 +17,4 @@ test:
 
 # DB_PATH (default ./tictactoe.db) selects the SQLite file.
 run:
-	uv run uvicorn --factory app.api:create_app --reload --port $${PORT:-8000}
+	uv run uvicorn --factory app.api:create_app --reload --timeout-graceful-shutdown 3 --port $${PORT:-8000}

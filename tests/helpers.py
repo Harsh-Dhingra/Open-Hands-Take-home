@@ -36,6 +36,8 @@ class Server:
                 str(self.port),
                 "--log-level",
                 "warning",
+                "--timeout-graceful-shutdown",
+                "2",  # open event streams must not hold the server up on SIGTERM
             ],  # fmt: skip
             cwd=ROOT,
             env={**os.environ, "DB_PATH": str(self.db), **self.env},

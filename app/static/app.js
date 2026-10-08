@@ -3,6 +3,7 @@
 
 const $ = (sel) => document.querySelector(sel);
 const POLL_MS = 1000;
+const OFFLINE_MESSAGE = "Cannot reach the server. Retrying…";
 
 let gameId = null;
 let state = null;
@@ -18,7 +19,7 @@ async function api(path, options) {
   try {
     res = await fetch(path, options);
   } catch {
-    throw new Error("Cannot reach the server. Retrying…");
+    throw new Error(OFFLINE_MESSAGE);
   }
   let body = null;
   try { body = await res.json(); } catch { /* non-JSON error page */ }
@@ -38,6 +39,9 @@ function setRole(role) {
   if (radio) radio.checked = true;
 }
 function showError(message) { $("#error").textContent = message || ""; }
+function clearOfflineNotice() {
+  if ($("#error").textContent === OFFLINE_MESSAGE) showError("");
+}
 
 // --- rendering -------------------------------------------------------------
 
@@ -91,7 +95,7 @@ function show(id, s) {
   gameId = id;
   state = s;
   render();
-  s.status === "in_progress" ? startPolling() : stopPolling();
+  watch(id, s);
 }
 
 // Only fields the user filled in are sent; the server applies defaults and validates ranges.
@@ -202,14 +206,60 @@ async function refresh() {
   if (!gameId) return;
   try {
     const s = await api(`/games/${gameId}`);
+    clearOfflineNotice();
     if (s.version !== state.version || s.status !== state.status) show(gameId, s);
   } catch (e) {
     showError(e.message);
   }
 }
 
-function startPolling() { if (!pollTimer) pollTimer = setInterval(refresh, POLL_MS); }
+function startPolling() {
+  if (!pollTimer) pollTimer = setInterval(refresh, POLL_MS);
+  setTransport("polling");
+}
 function stopPolling() { clearInterval(pollTimer); pollTimer = null; }
+
+// --- live updates -----------------------------------------------------------
+// Server-Sent Events push every change. Polling is only the fallback while the
+// stream is down (EventSource reconnects by itself, sending Last-Event-ID so
+// the server does not repeat what we already have).
+
+let source = null;
+let sourceGame = null;
+
+function setTransport(name) { document.body.dataset.transport = name; }
+
+function closeStream() {
+  if (source) source.close();
+  source = null;
+  sourceGame = null;
+}
+
+function watch(id, s) {
+  if (s.status !== "in_progress") {
+    closeStream();
+    stopPolling();
+    setTransport("none");
+    return;
+  }
+  if (source && sourceGame === id) return; // already following this game
+  closeStream();
+  if (typeof EventSource === "undefined") { startPolling(); return; }
+  sourceGame = id;
+  source = new EventSource(`/games/${encodeURIComponent(id)}/events`);
+  source.addEventListener("state", (e) => {
+    stopPolling();
+    setTransport("sse");
+    clearOfflineNotice(); // the stream is back
+    const incoming = JSON.parse(e.data);
+    if (incoming.id !== gameId) return;
+    if (!state || incoming.version !== state.version || incoming.status !== state.status) {
+      show(gameId, incoming); // our own move already updated state; this skips the echo
+    }
+  });
+  source.addEventListener("end", closeStream);
+  source.onerror = () => startPolling(); // the browser keeps retrying the stream meanwhile
+}
 
 // --- wiring ----------------------------------------------------------------
 

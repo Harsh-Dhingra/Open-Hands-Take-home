@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Protocol
 
 from app.engine import EngineError, Game, Move, new_game, replay
+from app.limits import DEFAULT_COLS, DEFAULT_K, DEFAULT_ROWS
 
 
 class GameNotFound(Exception):
@@ -28,7 +29,9 @@ class CorruptGame(Exception):
 
 
 class GameRepository(Protocol):
-    def create(self) -> tuple[str, Game]: ...
+    def create(
+        self, rows: int = DEFAULT_ROWS, cols: int = DEFAULT_COLS, k: int = DEFAULT_K
+    ) -> tuple[str, Game]: ...
 
     def get(self, game_id: str) -> Game: ...
 
@@ -49,8 +52,10 @@ class InMemoryRepository:
         self._games: dict[str, Game] = {}
         self._lock = threading.Lock()
 
-    def create(self) -> tuple[str, Game]:
-        game = new_game()
+    def create(
+        self, rows: int = DEFAULT_ROWS, cols: int = DEFAULT_COLS, k: int = DEFAULT_K
+    ) -> tuple[str, Game]:
+        game = new_game(rows, cols, k)
         with self._lock:
             game_id = secrets.token_hex(4)
             while game_id in self._games:  # pragma: no cover - 32-bit collision
@@ -119,8 +124,10 @@ class SqliteRepository:
         finally:
             conn.close()
 
-    def create(self) -> tuple[str, Game]:
-        game = new_game()
+    def create(
+        self, rows: int = DEFAULT_ROWS, cols: int = DEFAULT_COLS, k: int = DEFAULT_K
+    ) -> tuple[str, Game]:
+        game = new_game(rows, cols, k)
         with self._connect() as conn:
             while True:
                 game_id = secrets.token_hex(4)

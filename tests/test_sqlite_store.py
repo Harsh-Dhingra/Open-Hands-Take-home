@@ -210,3 +210,34 @@ def test_racing_distinct_cells_serialises_without_gaps(path):
     assert ns == list(range(1, len(ns) + 1))
     assert outcomes.count("ok") == len(ns)
     SqliteRepository(path).get(gid)  # still a legal game
+
+
+# --- configurable boards: stored dimensions drive replay -------------------
+
+
+def test_custom_board_survives_reopen_and_can_be_finished(path):
+    first = SqliteRepository(path)
+    gid, _ = first.create(5, 5, 4)
+    for r, c in [(2, 0), (4, 0), (2, 1), (4, 1), (2, 2)]:
+        play_x(first, gid, r, c)
+    before = first.get(gid)
+    del first
+
+    second = SqliteRepository(path)
+    assert second.get(gid) == before
+    assert (before.rows, before.cols, before.k) == (5, 5, 4)
+    assert [(i, g.version) for i, g in second.list()] == [(gid, 5)]
+    play_x(second, gid, 4, 2)  # O
+    won = play_x(second, gid, 2, 3)  # X completes four in row 2
+    assert won.status == "won" and won.winning_line == ((2, 0), (2, 1), (2, 2), (2, 3))
+    assert SqliteRepository(path).get(gid) == won
+
+
+def test_replay_bounds_come_from_the_stored_board_size(path, repo):
+    small, _ = repo.create()  # 3x3
+    big, _ = repo.create(5, 5, 4)
+    _insert_move(path, small, 1, "X", 4, 4)  # outside 3x3
+    _insert_move(path, big, 1, "X", 4, 4)  # corner of 5x5
+    with pytest.raises(CorruptGame):
+        repo.get(small)
+    assert repo.get(big).board[4][4] == "X"

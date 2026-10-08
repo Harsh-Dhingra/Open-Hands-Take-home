@@ -18,7 +18,6 @@
 <p align="center"><img src="docs/media/demo.gif" width="720" alt="Playing a game"></p>
 -->
 
-> 🎥 **Screen recording:** _link goes here_ &nbsp;·&nbsp; 📸 **Screenshots:** see [Screenshots](#-screenshots)
 
 ---
 

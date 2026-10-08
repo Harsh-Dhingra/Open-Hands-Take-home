@@ -1,6 +1,6 @@
 # Plan.md — Tic-Tac-Toe with a Real Backend
 
-**Status:** M0–M5 complete (see git history). Backlog B1–B5 not started.
+**Status:** M0–M5 and B1 (configurable board) complete (see git history). Backlog B2–B5 not started.
 
 ## 1. Objectives & Definition of Success
 

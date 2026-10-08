@@ -3,7 +3,8 @@ import threading
 
 import pytest
 
-from app.engine import CellTaken, apply_move, replay
+from app.ai import Opponent
+from app.engine import CellTaken, Move, apply_move, replay
 from app.store import CorruptGame, GameNotFound, SqliteRepository
 
 
@@ -241,3 +242,155 @@ def test_replay_bounds_come_from_the_stored_board_size(path, repo):
     with pytest.raises(CorruptGame):
         repo.get(small)
     assert repo.get(big).board[4][4] == "X"
+
+
+# --- the opponent columns: migration and constraints -------------------------------
+
+# The schema exactly as the first releases created it (no opponent columns).
+LEGACY_DDL = """
+CREATE TABLE games (
+    id     TEXT PRIMARY KEY,
+    n_rows INTEGER NOT NULL,
+    n_cols INTEGER NOT NULL,
+    k      INTEGER NOT NULL
+);
+CREATE TABLE moves (
+    game_id TEXT    NOT NULL REFERENCES games(id),
+    n       INTEGER NOT NULL,
+    player  TEXT    NOT NULL CHECK (player IN ('X', 'O')),
+    row_idx INTEGER NOT NULL,
+    col_idx INTEGER NOT NULL,
+    PRIMARY KEY (game_id, n),
+    UNIQUE (game_id, row_idx, col_idx)
+);
+"""
+
+
+def make_legacy_db(path):
+    conn = sqlite3.connect(path)
+    conn.executescript(LEGACY_DDL)
+    conn.execute("INSERT INTO games VALUES ('won1', 3, 3, 3)")
+    conn.execute("INSERT INTO games VALUES ('live1', 3, 3, 3)")
+    won = [("X", 0, 0), ("O", 1, 0), ("X", 0, 1), ("O", 1, 1), ("X", 0, 2)]
+    for n, (player, r, c) in enumerate(won, 1):
+        conn.execute("INSERT INTO moves VALUES ('won1', ?, ?, ?, ?)", (n, player, r, c))
+    conn.execute("INSERT INTO moves VALUES ('live1', 1, 'X', 1, 1)")
+    conn.commit()
+    conn.close()
+
+
+def columns(path):
+    return [r[1] for r in rows(path, "PRAGMA table_info(games)")]
+
+
+def test_a_database_from_an_older_version_is_migrated_and_keeps_its_games(path):
+    make_legacy_db(path)
+    assert "difficulty" not in columns(path)
+
+    repo = SqliteRepository(path)
+
+    assert columns(path)[-2:] == ["computer_player", "difficulty"]
+    won, live = repo.get("won1"), repo.get("live1")
+    assert won.status == "won" and won.winner == "X" and won.version == 5
+    assert live.version == 1 and live.next_player == "O"
+    assert repo.opponent_of("won1") is None and repo.opponent_of("live1") is None
+    assert [i for i, _ in repo.list()] == ["live1", "won1"]  # rowid order is preserved
+    # An old game is still playable, and a new computer game works beside it.
+    assert repo.update("live1", lambda g: apply_move(g, "O", 0, 0)).version == 2
+    gid, _ = repo.create(opponent=Opponent("O", "hard"))
+    assert repo.opponent_of(gid) == Opponent("O", "hard")
+
+
+def test_migration_is_idempotent_and_data_survives_reopening(path):
+    make_legacy_db(path)
+    SqliteRepository(path)
+    first = columns(path)
+    repo = SqliteRepository(path)  # second open: nothing left to migrate
+    gid, _ = repo.create(opponent=Opponent("X", "easy"))
+    assert columns(path) == first
+    assert SqliteRepository(path).opponent_of(gid) == Opponent("X", "easy")
+
+
+def test_several_processes_migrating_at_once_do_not_fail(path):
+    make_legacy_db(path)
+    errors = []
+
+    def open_repo():
+        try:
+            SqliteRepository(path)
+        except Exception as exc:  # noqa: BLE001 - any failure is a test failure
+            errors.append(exc)
+
+    threads = [threading.Thread(target=open_repo) for _ in range(12)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert not errors
+    assert columns(path).count("difficulty") == 1
+
+
+@pytest.mark.parametrize("column,bad", [("computer_player", "Z"), ("difficulty", "impossible")])
+def test_opponent_columns_reject_values_outside_their_domain(path, repo, column, bad):
+    sql = f"INSERT INTO games (id, n_rows, n_cols, k, {column}) VALUES ('g', 3, 3, 3, ?)"
+    conn = raw(path)
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(sql, (bad,))
+    finally:
+        conn.close()
+
+
+def test_migrated_databases_enforce_the_same_domains(path):
+    make_legacy_db(path)
+    SqliteRepository(path)
+    conn = raw(path)
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE games SET difficulty = 'impossible' WHERE id = 'won1'")
+    conn.close()
+
+
+def test_opening_moves_are_saved_with_the_game_in_order(path, repo):
+    gid, _ = repo.create(opponent=Opponent("X", "hard"), moves=(Move(1, "X", 2, 2),))
+    assert rows(path, "SELECT n, player, row_idx, col_idx FROM moves WHERE game_id=?", gid) == [
+        (1, "X", 2, 2)
+    ]
+    assert rows(path, "SELECT computer_player, difficulty FROM games WHERE id=?", gid) == [
+        ("X", "hard")
+    ]
+
+
+def test_a_failure_while_saving_the_opening_leaves_no_game_behind(path, repo, monkeypatch):
+    def explode(*args, **kwargs):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(SqliteRepository, "_insert_moves", staticmethod(explode))
+    with pytest.raises(RuntimeError):
+        repo.create(opponent=Opponent("X", "hard"), moves=(Move(1, "X", 1, 1),))
+    assert rows(path, "SELECT COUNT(*) FROM games") == [(0,)]
+    assert rows(path, "SELECT COUNT(*) FROM moves") == [(0,)]
+
+
+def test_losing_the_migration_race_is_not_an_error(path):
+    # Simulate another process adding the columns between our check and our ALTER:
+    # the column list we see is stale (empty) although the columns already exist.
+    SqliteRepository(path)
+    real = raw(path)
+
+    class StaleView:
+        def execute(self, sql, *args):
+            if sql.startswith("PRAGMA table_info"):
+                return []
+            return real.execute(sql, *args)
+
+    SqliteRepository._migrate(StaleView())  # must not raise "duplicate column name"
+    assert columns(path).count("computer_player") == 1
+    real.close()
+
+
+def test_a_migration_failure_other_than_the_race_is_not_swallowed(path):
+    make_legacy_db(path)
+    conn = raw(path)
+    conn.execute("PRAGMA query_only = ON")  # ALTER will fail: attempt to write a readonly database
+    with pytest.raises(sqlite3.OperationalError, match="readonly"):
+        SqliteRepository._migrate(conn)
+    conn.close()
+    assert "difficulty" not in columns(path)

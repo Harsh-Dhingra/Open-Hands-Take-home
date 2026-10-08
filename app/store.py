@@ -9,6 +9,7 @@ from __future__ import annotations
 import secrets
 import sqlite3
 import threading
+import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -147,10 +148,24 @@ class SqliteRepository:
     def __init__(self, path: str | Path) -> None:
         self._path = str(path)
         Path(self._path).parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.executescript(_SCHEMA)
-            self._migrate(conn)
+        self._initialise()
+
+    def _initialise(self) -> None:
+        # Switching a fresh database to WAL needs an exclusive lock that SQLite's
+        # busy timeout does not always wait for, so several processes starting on
+        # the same file at once can see "database is locked". Retry briefly.
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                with self._connect() as conn:
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.executescript(_SCHEMA)
+                    self._migrate(conn)
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc) or time.monotonic() > deadline:
+                    raise
+                time.sleep(0.02)
 
     @staticmethod
     def _migrate(conn: sqlite3.Connection) -> None:

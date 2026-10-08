@@ -394,3 +394,45 @@ def test_a_migration_failure_other_than_the_race_is_not_swallowed(path):
         SqliteRepository._migrate(conn)
     conn.close()
     assert "difficulty" not in columns(path)
+
+
+# --- startup under lock contention ------------------------------------------------
+
+
+def _flaky_migrate(monkeypatch, failures, message="database is locked"):
+    calls = []
+    real = SqliteRepository._migrate
+
+    def migrate(conn):
+        calls.append(1)
+        if len(calls) <= failures:
+            raise sqlite3.OperationalError(message)
+        real(conn)
+
+    monkeypatch.setattr(SqliteRepository, "_migrate", staticmethod(migrate))
+    return calls
+
+
+def test_startup_retries_while_the_database_is_briefly_locked(path, monkeypatch):
+    calls = _flaky_migrate(monkeypatch, failures=2)
+    SqliteRepository(path)
+    assert len(calls) == 3
+    assert "difficulty" in columns(path)
+
+
+def test_startup_gives_up_on_a_lock_that_never_clears(path, monkeypatch):
+    from app import store
+
+    _flaky_migrate(monkeypatch, failures=10**6)
+    clock = iter([0.0, 1.0, 100.0, 200.0, 300.0])
+    monkeypatch.setattr(store.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(store.time, "sleep", lambda s: None)
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        SqliteRepository(path)
+
+
+def test_startup_does_not_retry_other_errors(path, monkeypatch):
+    calls = _flaky_migrate(monkeypatch, failures=10**6, message="no such table: games")
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        SqliteRepository(path)
+    assert len(calls) == 1

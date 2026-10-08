@@ -1,5 +1,7 @@
 # Plan.md — Tic-Tac-Toe with a Real Backend
 
+**Status:** M0–M5 complete (see git history). Backlog B1–B5 not started.
+
 ## 1. Objectives & Definition of Success
 
 **Objective:** a tic-tac-toe service where the backend owns all state and rules, built in ≤2h in small, reviewable steps that show engineering depth, clear communication and deliberate use of AI.

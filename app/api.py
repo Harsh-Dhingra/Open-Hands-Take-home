@@ -11,7 +11,10 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import engine
+from app.limits import describe, validate_config
 from app.models import (
+    ConfigOut,
+    CreateGameRequest,
     ErrorOut,
     GameOut,
     GameSummary,
@@ -64,15 +67,24 @@ def create_app(repo: GameRepository | None = None) -> FastAPI:
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.post("/games", status_code=201, response_model=GameOut)
-    def create_game(response: Response) -> GameOut:
-        game_id, game = repo.create()
+    @app.get("/config", response_model=ConfigOut)
+    def get_config() -> dict:
+        return describe()
+
+    @app.post("/games", status_code=201, response_model=GameOut, responses=ERROR_RESPONSES)
+    def create_game(response: Response, req: CreateGameRequest | None = None) -> GameOut:
+        req = req or CreateGameRequest()  # no body == all defaults (3x3, k=3)
+        validate_config(req.rows, req.cols, req.k)  # before anything is allocated
+        game_id, game = repo.create(req.rows, req.cols, req.k)
         response.headers["Location"] = f"/games/{game_id}"
         return game_out(game_id, game)
 
     @app.get("/games", response_model=list[GameSummary])
     def list_games() -> list[GameSummary]:
-        return [GameSummary(id=i, status=g.status, version=g.version) for i, g in repo.list()]
+        return [
+            GameSummary(id=i, rows=g.rows, cols=g.cols, k=g.k, status=g.status, version=g.version)
+            for i, g in repo.list()
+        ]
 
     @app.get("/games/{game_id}", response_model=GameOut, responses=ERROR_RESPONSES)
     def get_game(game_id: str) -> GameOut:

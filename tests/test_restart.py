@@ -69,6 +69,22 @@ def test_draw_survives_restart(tmp_path):
     assert post_move(after, gid, "X", 0, 0).json()["error"]["code"] == "game_over"
 
 
+def test_configured_board_survives_restart_and_can_be_finished(tmp_path):
+    db = tmp_path / "games.db"
+    first = boot(db)
+    gid = first.post("/games", json={"rows": 3, "cols": 7, "k": 4}).json()["id"]
+    for i, (row, col) in enumerate([(1, 2), (0, 0), (1, 3), (0, 1), (1, 4), (0, 2)]):
+        assert post_move(first, gid, "XO"[i % 2], row, col).status_code == 200
+    before = first.get(f"/games/{gid}").json()
+    del first
+
+    second = boot(db)
+    assert second.get(f"/games/{gid}").json() == before
+    assert (before["rows"], before["cols"], before["k"]) == (3, 7, 4)
+    won = post_move(second, gid, "X", 1, 5).json()
+    assert won["status"] == "won" and won["winning_line"] == [[1, 2], [1, 3], [1, 4], [1, 5]]
+
+
 def test_create_app_defaults_to_db_path_env(tmp_path, monkeypatch):
     db = tmp_path / "from_env.db"
     monkeypatch.setenv("DB_PATH", str(db))

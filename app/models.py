@@ -4,9 +4,20 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, StrictInt
+from pydantic import BaseModel, ConfigDict, StrictInt
 
 from app.engine import Game, Move, Player
+from app.limits import DEFAULT_COLS, DEFAULT_K, DEFAULT_ROWS
+
+
+class CreateGameRequest(BaseModel):
+    """Types are checked here (strict ints, no unknown fields); ranges in app.limits."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rows: StrictInt = DEFAULT_ROWS
+    cols: StrictInt = DEFAULT_COLS
+    k: StrictInt = DEFAULT_K
 
 
 class MoveRequest(BaseModel):
@@ -37,8 +48,28 @@ class GameOut(BaseModel):
 
 class GameSummary(BaseModel):
     id: str
+    rows: int
+    cols: int
+    k: int
     status: Literal["in_progress", "won", "draw"]
     version: int
+
+
+class ConfigDefaults(BaseModel):
+    rows: int
+    cols: int
+    k: int
+
+
+class ConfigLimits(BaseModel):
+    min_size: int
+    max_size: int
+    min_k: int
+
+
+class ConfigOut(BaseModel):
+    defaults: ConfigDefaults
+    limits: ConfigLimits
 
 
 class ErrorDetail(BaseModel):

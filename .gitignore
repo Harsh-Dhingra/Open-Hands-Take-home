@@ -1,0 +1,25 @@
+# secrets / local config
+.env
+.env.*
+!.env.example
+
+# data
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# editors / OS
+.idea/
+.vscode/
+.DS_Store

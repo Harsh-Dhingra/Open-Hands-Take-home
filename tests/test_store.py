@@ -3,34 +3,31 @@ import threading
 import pytest
 
 from app.engine import CellTaken, apply_move
-from app.store import GameNotFound, InMemoryRepository
+from app.store import GameNotFound
 
 
-def test_create_and_get_round_trip():
-    repo = InMemoryRepository()
+def test_create_and_get_round_trip(repo):
     gid, game = repo.create()
     assert repo.get(gid) == game
 
 
-def test_get_unknown_raises():
+def test_get_unknown_raises(repo):
     with pytest.raises(GameNotFound):
-        InMemoryRepository().get("missing")
+        repo.get("missing")
 
 
-def test_update_saves_and_returns_result():
-    repo = InMemoryRepository()
+def test_update_saves_and_returns_result(repo):
     gid, _ = repo.create()
     updated = repo.update(gid, lambda g: apply_move(g, "X", 0, 0))
     assert repo.get(gid) == updated and updated.version == 1
 
 
-def test_update_unknown_raises():
+def test_update_unknown_raises(repo):
     with pytest.raises(GameNotFound):
-        InMemoryRepository().update("missing", lambda g: g)
+        repo.update("missing", lambda g: g)
 
 
-def test_failed_update_saves_nothing():
-    repo = InMemoryRepository()
+def test_failed_update_saves_nothing(repo):
     gid, _ = repo.create()
     repo.update(gid, lambda g: apply_move(g, "X", 0, 0))
     with pytest.raises(CellTaken):
@@ -38,16 +35,14 @@ def test_failed_update_saves_nothing():
     assert repo.get(gid).version == 1
 
 
-def test_list_newest_first():
-    repo = InMemoryRepository()
+def test_list_newest_first(repo):
     a, _ = repo.create()
     b, _ = repo.create()
     assert [i for i, _ in repo.list()] == [b, a]
 
 
-def test_update_is_atomic_under_threads():
+def test_update_is_atomic_under_threads(repo):
     # 30 threads race to play the same cell: the lock makes exactly one win.
-    repo = InMemoryRepository()
     gid, _ = repo.create()
     results = []
 

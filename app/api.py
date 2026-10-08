@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -16,7 +18,7 @@ from app.models import (
     game_out,
     move_out,
 )
-from app.store import GameNotFound, GameRepository, InMemoryRepository
+from app.store import GameNotFound, GameRepository, SqliteRepository
 
 STATUS_BY_CODE = {
     GameNotFound.code: 404,
@@ -39,7 +41,7 @@ def _error(status: int, code: str, message: str) -> JSONResponse:
 
 
 def create_app(repo: GameRepository | None = None) -> FastAPI:
-    repo = repo or InMemoryRepository()
+    repo = repo or SqliteRepository(os.environ.get("DB_PATH", "tictactoe.db"))
     app = FastAPI(title="Tic-Tac-Toe")
 
     @app.exception_handler(engine.EngineError)
@@ -82,6 +84,3 @@ def create_app(repo: GameRepository | None = None) -> FastAPI:
         return [move_out(m) for m in repo.get(game_id).moves]
 
     return app
-
-
-app = create_app()

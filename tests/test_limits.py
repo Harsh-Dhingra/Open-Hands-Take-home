@@ -1,4 +1,6 @@
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from app import limits
 from app.engine import InvalidConfig, new_game
@@ -42,3 +44,26 @@ def test_describe_matches_the_constants():
     assert d["defaults"] == {"rows": 3, "cols": 3, "k": 3}
     assert d["limits"] == {"min_size": 3, "max_size": 20, "min_k": 3}
     validate_config(**d["defaults"])
+
+
+_any_int = st.integers(-(10**18), 10**18)
+
+
+@given(_any_int, _any_int, _any_int)
+def test_validate_config_accepts_exactly_the_documented_space(rows, cols, k):
+    """Random integers across the whole range, including huge and negative values."""
+    allowed = 3 <= rows <= 20 and 3 <= cols <= 20 and 3 <= k <= max(rows, cols)
+    try:
+        validate_config(rows, cols, k)
+        accepted = True
+    except InvalidConfig:
+        accepted = False  # any other exception type would fail the test
+    assert accepted == allowed
+
+
+@given(st.integers(3, 20), st.integers(3, 20), st.data())
+def test_every_supported_config_builds_a_game(rows, cols, data):
+    k = data.draw(st.integers(3, max(rows, cols)))
+    validate_config(rows, cols, k)
+    g = new_game(rows, cols, k)
+    assert len(g.board) == rows and len(g.board[0]) == cols

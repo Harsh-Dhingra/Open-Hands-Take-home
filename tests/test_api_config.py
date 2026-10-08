@@ -1,6 +1,12 @@
 """Board configuration over HTTP (runs on both storage backends via the client fixture)."""
 
 import pytest
+from fastapi.testclient import TestClient
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
+from app.api import create_app
+from app.store import InMemoryRepository
 
 
 def move(client, gid, player, row, col):
@@ -140,3 +146,29 @@ def test_config_endpoint_publishes_defaults_and_limits(client):
         "defaults": {"rows": 3, "cols": 3, "k": 3},
         "limits": {"min_size": 3, "max_size": 20, "min_k": 3},
     }
+
+
+# --- fuzz: random request bodies never crash the server -------------------------
+
+_scalar = st.one_of(
+    st.integers(-(10**15), 10**15), st.floats(allow_nan=False), st.booleans(), st.none(),
+    st.text(max_size=5),
+)  # fmt: skip
+_body = st.dictionaries(st.sampled_from(["rows", "cols", "k", "extra"]), _scalar, max_size=4)
+
+
+@settings(max_examples=150, deadline=None)
+@given(_body)
+def test_random_config_bodies_are_created_or_cleanly_rejected(body):
+    client = TestClient(create_app(InMemoryRepository()))
+    r = client.post("/games", json=body)
+    ints = all(type(v) is int for v in body.values())  # noqa: E721 - bool is not an int here
+    rows, cols, k = (body.get(f, 3) for f in ("rows", "cols", "k"))
+    if set(body) <= {"rows", "cols", "k"} and ints:
+        ok = 3 <= rows <= 20 and 3 <= cols <= 20 and 3 <= k <= max(rows, cols)
+        assert r.status_code == (201 if ok else 422), (body, r.text)
+        if not ok:
+            assert r.json()["error"]["code"] == "invalid_config"
+    else:
+        assert r.status_code == 422 and r.json()["error"]["code"] == "validation_error", body
+    assert len(client.get("/games").json()) == (1 if r.status_code == 201 else 0)

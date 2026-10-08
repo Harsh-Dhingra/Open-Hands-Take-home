@@ -50,6 +50,8 @@ button.link { border: 0; background: none; color: var(--accent); padding: 0 4px;
 }
 .board-wrap { overflow-x: auto; padding: 2px; }
 .num { width: 4.5em; padding: 4px 8px; }
+.num:invalid { border-color: var(--err); }
+.hint { flex-basis: 100%; margin: 0; font-size: .8rem; color: var(--muted); }
 .rules { margin: 0 auto 4px; text-align: center; color: var(--muted); font-size: .9rem; }
 .cell {
   aspect-ratio: 1; padding: 0; border-radius: 18%; font-size: calc(55cqw / var(--cols));

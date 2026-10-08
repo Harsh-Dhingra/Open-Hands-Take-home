@@ -103,9 +103,25 @@ function configBody() {
   return body;
 }
 
+let limits = null;
+
+// Hint only: the server stays the authority and still returns invalid_config for bad input.
+function syncHint() {
+  if (!limits) return;
+  const rows = CFG.rows.valueAsNumber;
+  const cols = CFG.cols.valueAsNumber;
+  const longest = Math.max(rows, cols);
+  if (Number.isFinite(longest)) CFG.k.max = longest;
+  const kMax = Number.isFinite(longest) ? longest : "longest side";
+  $("#cfg-hint").textContent =
+    `Rows and columns: ${limits.min_size}–${limits.max_size}. In a row: ${limits.min_k}–${kMax}.`;
+}
+
 async function loadLimits() {
   try {
-    const { defaults, limits } = await api("/config");
+    const config = await api("/config");
+    limits = config.limits;
+    const { defaults } = config;
     for (const name of ["rows", "cols"]) {
       CFG[name].min = limits.min_size;
       CFG[name].max = limits.max_size;
@@ -113,6 +129,7 @@ async function loadLimits() {
     }
     CFG.k.min = limits.min_k;
     CFG.k.value = defaults.k;
+    syncHint();
   } catch (e) {
     showError(e.message);
   }
@@ -180,6 +197,8 @@ function stopPolling() { clearInterval(pollTimer); pollTimer = null; }
 // --- wiring ----------------------------------------------------------------
 
 $("#new-game").addEventListener("click", newGame);
+CFG.rows.addEventListener("input", syncHint);
+CFG.cols.addEventListener("input", syncHint);
 
 $("#join-form").addEventListener("submit", (e) => {
   e.preventDefault();

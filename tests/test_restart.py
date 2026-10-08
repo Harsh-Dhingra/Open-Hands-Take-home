@@ -55,6 +55,20 @@ def test_state_and_history_survive_restart(tmp_path):
     assert len(third.get(f"/games/{gid}/moves").json()) == 5
 
 
+def test_draw_survives_restart(tmp_path):
+    db = tmp_path / "games.db"
+    draw = [(0, 0), (0, 1), (0, 2), (1, 1), (1, 0), (1, 2), (2, 1), (2, 0), (2, 2)]
+    first = boot(db)
+    gid = first.post("/games").json()["id"]
+    for i, (row, col) in enumerate(draw):
+        assert post_move(first, gid, "XO"[i % 2], row, col).status_code == 200
+
+    after = boot(db)
+    state = after.get(f"/games/{gid}").json()
+    assert state["status"] == "draw" and state["winner"] is None and state["next_player"] is None
+    assert post_move(after, gid, "X", 0, 0).json()["error"]["code"] == "game_over"
+
+
 def test_create_app_defaults_to_db_path_env(tmp_path, monkeypatch):
     db = tmp_path / "from_env.db"
     monkeypatch.setenv("DB_PATH", str(db))

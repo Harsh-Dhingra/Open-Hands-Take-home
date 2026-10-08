@@ -28,6 +28,20 @@ def validate_config(rows: int, cols: int, k: int) -> None:
         )
 
 
+def validate_opponent(
+    rows: int, cols: int, k: int, opponent: str, difficulty: str | None, human_plays: str | None
+) -> None:
+    """The computer only plays 3x3; difficulty/side only make sense against it."""
+    if opponent == "human":
+        if difficulty is not None or human_plays is not None:
+            raise InvalidConfig("difficulty and human_plays only apply when opponent is 'computer'")
+        return
+    if (rows, cols, k) != (3, 3, 3):
+        raise InvalidConfig(
+            f"the computer plays 3x3 with 3 in a row only, got {rows}x{cols} with k={k}"
+        )
+
+
 def describe() -> dict:
     """Defaults and limits as served by GET /config."""
     return {

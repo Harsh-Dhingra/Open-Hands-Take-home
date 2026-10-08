@@ -20,22 +20,35 @@ curl -X POST localhost:8000/games                      # -> {"id": "ab12cd34", .
 curl -X POST localhost:8000/games/ab12cd34/moves \
      -H 'content-type: application/json' -d '{"player":"X","row":1,"col":1}'
 curl localhost:8000/games/ab12cd34/moves               # full move history
+curl -X POST localhost:8000/games -H 'content-type: application/json' \
+     -d '{"rows": 5, "cols": 7, "k": 4}'               # a 5x7 board, 4 in a row wins
+curl localhost:8000/config                             # defaults and limits
 ```
+
+### Board options
+
+| Field | Default | Allowed |
+|---|---|---|
+| `rows` | 3 | 3 to 20 |
+| `cols` | 3 | 3 to 20 |
+| `k` (in a row to win) | 3 | 3 up to the longer side |
+
+No body (or `{}`) gives the classic 3×3. Wrong types or unknown fields return 422 `validation_error`; out-of-range values return 422 `invalid_config` with a message naming the field, and no game is created. A run longer than `k` still wins, and `winning_line` lists the whole run.
 
 ## Design
 
-- **`app/engine.py`: the rules, with no I/O.** A game is an append-only log of moves; the board, status, winner and winning line are derived from it. `apply_move` returns a new game and never mutates its input. The win check only looks at lines through the last move. Rows, columns and K are parameters, so the engine is already N×M / K-in-a-row (the API just doesn't expose it yet).
+- **`app/engine.py`: the rules, with no I/O.** A game is an append-only log of moves; the board, status, winner and winning line are derived from it. `apply_move` returns a new game and never mutates its input. The win check only looks at lines through the last move. Rows, columns and K are parameters, so any N×M board with K-in-a-row works. Product limits (3 to 20, k at least 3) are enforced separately in `app/limits.py`, so the engine stays general while the service refuses degenerate or huge boards before allocating anything.
 - **`app/store.py`: persistence behind a small interface.** The in-memory and SQLite repositories pass the same contract tests. SQLite stores only the move log (no status or winner columns), so state can never disagree with history. `update()` runs under `BEGIN IMMEDIATE`, so the read-modify-write is atomic across threads and processes, and a rejected move saves nothing. Constraints reject a duplicate move number or a cell played twice, and an illegal stored log raises `CorruptGame` instead of guessing.
 - **`app/api.py` + `app/models.py`: HTTP only.** Errors have a single shape, `{"error": {"code", "message"}}`, with stable codes: 404 `not_found`; 409 `cell_taken`, `not_your_turn`, `game_over`; 422 `out_of_bounds`, `validation_error`.
 - **`app/static/`: the UI renders server state only** and never decides anything; illegal clicks are sent and the server's message is shown. Two tabs stay in sync by polling.
 
 ## Tests
 
-141 tests, 100% line and branch coverage. The engine has a hard 100% gate in `make test`. They cover every winning line for both players, draws, a win on the last cell beating a draw, every error path, a Hypothesis property test of invariants over random games, the whole API suite on both storage backends, SQLite constraints and rollback, racing writers, and restarting a real server process after both a graceful stop and `kill -9`.
+276 tests, 100% line and branch coverage. The engine has a hard 100% gate in `make test`. They cover every winning line for both players, draws, a win on the last cell beating a draw, every error path, a Hypothesis property test of invariants over random games, the whole API suite on both storage backends, SQLite constraints and rollback, racing writers, and restarting a real server process after both a graceful stop and `kill -9`.
 
 ## Beyond the requirements
 
-Games survive restarts with a replayable move history (`GET /games/{id}/moves`), and the engine supports any board size. Two clients can play one game, and simultaneous writes are serialised safely (only one of two racing moves into the same cell is accepted).
+Games survive restarts with a replayable move history (`GET /games/{id}/moves`), and boards can be any size from 3×3 to 20×20 with any K (the UI has size controls and scrolls wide boards on a phone). Win detection on rectangular boards is checked in all four directions, including against an independent brute-force scan on random games. Two clients can play one game, and simultaneous writes are serialised safely (only one of two racing moves into the same cell is accepted).
 
 ## AI tools
 
@@ -44,7 +57,7 @@ Games survive restarts with a replayable move history (`GET /games/{id}/moves`),
 ## What didn't go as planned / what I'd improve
 
 <!-- TODO (your words). Known gaps to consider mentioning:
-- Not built: board size/K options in the API, stale-move detection (`expected_version`), a replay view in the UI, Docker Compose, a computer opponent.
+- Not built: stale-move detection (`expected_version`), a replay view in the UI, Docker Compose, a computer opponent.
 - Polling (1 s) instead of push updates.
 - The UI has no automated browser test; I checked it by hand.
 - CI has not run on GitHub yet.

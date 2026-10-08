@@ -13,7 +13,8 @@ body {
   margin: 0; background: var(--bg); color: var(--ink);
   font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
 }
-main { max-width: 440px; margin: 0 auto; padding: 24px 16px 48px; }
+main { max-width: 920px; margin: 0 auto; padding: 24px 16px 48px; }
+.controls, .role, .share, .status, .rules, .error { width: min(100%, 440px); margin-left: auto; margin-right: auto; }
 h1 { margin: 0 0 16px; font-size: 1.6rem; text-align: center; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
@@ -30,20 +31,31 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 button.link { border: 0; background: none; color: var(--accent); padding: 0 4px; text-decoration: underline; }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
-.role { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 12px; padding: 4px 12px 8px;
+.role { box-sizing: border-box; border: 1px solid var(--line); border-radius: 8px; margin: 0 auto 12px; padding: 4px 12px 8px;
   display: flex; gap: 14px; flex-wrap: wrap; }
 .role legend { color: var(--muted); font-size: .85rem; padding: 0 4px; }
-.share { margin: 0 0 12px; font-size: .9rem; color: var(--muted); word-break: break-all; }
+.share { margin: 0 auto 12px; font-size: .9rem; color: var(--muted); word-break: break-all; }
 
 .status { text-align: center; font-weight: 600; min-height: 1.6em; margin-bottom: 12px; }
 .status.won { color: var(--accent); font-size: 1.2rem; }
 
+/* Scales with the number of columns: a 3x3 board stays compact, 20x20 uses the width. */
 .board {
-  --size: 3; display: grid; gap: 8px; margin: 0 auto;
-  grid-template-columns: repeat(var(--size), 1fr); max-width: 360px;
+  --cols: 3; display: grid; margin: 0 auto;
+  gap: calc(24px / var(--cols) + 2px);
+  grid-template-columns: repeat(var(--cols), 1fr);
+  /* Never narrower than 28px per cell: on a phone a wide board scrolls instead of shrinking. */
+  width: max(calc(var(--cols) * 28px), min(100%, max(360px, calc(var(--cols) * 64px))));
+  container-type: inline-size;
 }
+.board-wrap { overflow-x: auto; padding: 2px; }
+.num { width: 4.5em; padding: 4px 8px; }
+.num:invalid { border-color: var(--err); }
+.hint { flex-basis: 100%; margin: 0; font-size: .8rem; color: var(--muted); }
+.rules { margin: 0 auto 4px; text-align: center; color: var(--muted); font-size: .9rem; }
 .cell {
-  aspect-ratio: 1; padding: 0; border-radius: 12px; font-size: clamp(2rem, 14vw, 3.6rem);
+  aspect-ratio: 1; padding: 0; border-radius: 18%; font-size: calc(55cqw / var(--cols));
+  min-width: 0; line-height: 1;
   font-weight: 700; display: grid; place-items: center; background: var(--card);
   border: 2px solid var(--line); transition: transform .08s, background .15s;
 }
@@ -56,6 +68,6 @@ button.link { border: 0; background: none; color: var(--accent); padding: 0 4px;
 .board[data-next="X"] .cell.empty:not(:disabled):hover::after { content: "X"; color: var(--x); opacity: .3; }
 .board[data-next="O"] .cell.empty:not(:disabled):hover::after { content: "O"; color: var(--o); opacity: .3; }
 .cell:disabled { cursor: default; }
-.error { min-height: 1.4em; margin: 12px 0 0; text-align: center; color: var(--err); font-weight: 500; }
+.error { min-height: 1.4em; margin: 12px auto 0; text-align: center; color: var(--err); font-weight: 500; }
 @keyframes pop { from { transform: scale(.6); } to { transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) { .cell, .cell.pop { animation: none; transition: none; } }

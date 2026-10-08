@@ -19,6 +19,14 @@
       </form>
     </section>
 
+    <fieldset id="board-config" class="role">
+      <legend>Board</legend>
+      <label>Rows <input id="cfg-rows" type="number" inputmode="numeric" class="num"></label>
+      <label>Columns <input id="cfg-cols" type="number" inputmode="numeric" class="num"></label>
+      <label>In a row <input id="cfg-k" type="number" inputmode="numeric" class="num"></label>
+      <p id="cfg-hint" class="hint"></p>
+    </fieldset>
+
     <fieldset id="role" class="role">
       <legend>Play as</legend>
       <label><input type="radio" name="role" value="X" checked> X</label>
@@ -31,8 +39,9 @@
       <button id="copy" type="button" class="link">Copy link</button>
     </p>
 
+    <p id="rules" class="rules"></p>
     <div id="status" class="status" role="status" aria-live="polite">Start a new game to play.</div>
-    <div id="board" class="board" role="grid" aria-label="Game board"></div>
+    <div class="board-wrap"><div id="board" class="board" role="grid" aria-label="Game board"></div></div>
     <p id="error" class="error" role="alert"></p>
   </main>
   <script src="/app.js"></script>

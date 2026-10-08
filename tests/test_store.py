@@ -2,7 +2,7 @@ import threading
 
 import pytest
 
-from app.engine import CellTaken, InvalidConfig, apply_move
+from app.engine import CellTaken, InvalidConfig, StaleVersion, apply_move
 from app.store import GameNotFound
 
 
@@ -87,3 +87,23 @@ def test_non_square_game_plays_to_a_win_and_reads_back(repo):
     assert stored.status == "won" and stored.winner == "X"
     assert stored.winning_line == ((0, 3), (0, 4), (0, 5), (0, 6))
     assert stored.version == 7
+
+
+def test_stale_update_is_rejected_atomically_and_saves_nothing(repo):
+    gid, _ = repo.create()
+    repo.update(gid, lambda g: apply_move(g, "X", 0, 0, expected_version=0))
+    with pytest.raises(StaleVersion) as exc:
+        repo.update(gid, lambda g: apply_move(g, "O", 1, 1, expected_version=0))
+    assert exc.value.current_version == 1
+    stored = repo.get(gid)
+    assert stored.version == 1 and stored.board[1][1] is None
+
+
+def test_chained_versions_apply_in_order(repo):
+    gid, game = repo.create()
+    for i, (r, c) in enumerate([(0, 0), (1, 1), (2, 2)]):
+        game = repo.update(
+            gid, lambda g, v=i, r=r, c=c: apply_move(g, g.next_player, r, c, expected_version=v)
+        )
+        assert game.version == i + 1
+    assert repo.get(gid) == game

@@ -32,6 +32,7 @@ STATUS_BY_CODE = {
     engine.GameOver.code: 409,
     engine.CellTaken.code: 409,
     engine.NotYourTurn.code: 409,
+    engine.StaleVersion.code: 409,
     engine.OutOfBounds.code: 422,
     engine.InvalidConfig.code: 422,
 }
@@ -43,8 +44,9 @@ ERROR_RESPONSES = {
 }
 
 
-def _error(status: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}})
+def _error(status: int, code: str, message: str, **extra: int) -> JSONResponse:
+    detail = {"code": code, "message": message, **extra}
+    return JSONResponse(status_code=status, content={"error": detail})
 
 
 def create_app(repo: GameRepository | None = None) -> FastAPI:
@@ -55,7 +57,9 @@ def create_app(repo: GameRepository | None = None) -> FastAPI:
     @app.exception_handler(GameNotFound)
     async def domain_error(_: Request, exc: Exception) -> JSONResponse:
         code = exc.code  # type: ignore[attr-defined]
-        return _error(STATUS_BY_CODE[code], code, str(exc))
+        stale = isinstance(exc, engine.StaleVersion)
+        extra = {"current_version": exc.current_version} if stale else {}
+        return _error(STATUS_BY_CODE[code], code, str(exc), **extra)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -92,7 +96,10 @@ def create_app(repo: GameRepository | None = None) -> FastAPI:
 
     @app.post("/games/{game_id}/moves", response_model=GameOut, responses=ERROR_RESPONSES)
     def make_move(game_id: str, req: MoveRequest) -> GameOut:
-        game = repo.update(game_id, lambda g: engine.apply_move(g, req.player, req.row, req.col))
+        game = repo.update(
+            game_id,
+            lambda g: engine.apply_move(g, req.player, req.row, req.col, req.expected_version),
+        )
         return game_out(game_id, game)
 
     @app.get("/games/{game_id}/moves", response_model=list[MoveOut], responses=ERROR_RESPONSES)

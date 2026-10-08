@@ -165,7 +165,11 @@ async function loadGame(id) {
   }
 }
 
+let moving = false; // a move request is in flight: ignore further clicks (no double submit)
+
 async function play(row, col) {
+  if (moving) return;
+  moving = true;
   showError("");
   const role = selectedRole();
   const player = role === "both" ? state.next_player : role;
@@ -173,11 +177,24 @@ async function play(row, col) {
     show(gameId, await api(`/games/${gameId}/moves`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ player, row, col }),
+      // Echo the version the server last told us about; the server decides if it is stale.
+      body: JSON.stringify({ player, row, col, expected_version: state.version }),
     }));
   } catch (e) {
-    showError(e.message);
-    refresh(); // our view may be stale (the other player moved)
+    if (e.code === "stale_version") {
+      // Someone moved since we last looked. Show the latest position; do not retry for them.
+      try {
+        show(gameId, await api(`/games/${gameId}`));
+        showError("The board changed while you were deciding. Here is the latest position.");
+      } catch (e2) {
+        showError(e2.message);
+      }
+    } else {
+      showError(e.message);
+      refresh(); // our view may be stale in some other way
+    }
+  } finally {
+    moving = false;
   }
 }
 

@@ -9,6 +9,7 @@ from app.engine import (
     InvalidConfig,
     NotYourTurn,
     OutOfBounds,
+    StaleVersion,
     apply_move,
     new_game,
     replay,
@@ -93,6 +94,49 @@ def test_apply_move_does_not_mutate_input():
     g = new_game()
     apply_move(g, "X", 0, 0)
     assert g.version == 0 and g.board[0][0] is None
+
+
+# --- optimistic concurrency ---------------------------------------------------
+
+
+def test_matching_expected_version_is_applied():
+    g = apply_move(new_game(), "X", 0, 0, expected_version=0)
+    g = apply_move(g, "O", 1, 1, expected_version=1)
+    assert g.version == 2 and g.board[1][1] == "O"
+
+
+@pytest.mark.parametrize("expected", [0, 2, 7])  # behind and ahead of version 1
+def test_mismatched_expected_version_is_stale(expected):
+    g = apply_move(new_game(), "X", 0, 0)
+    with pytest.raises(StaleVersion) as exc:
+        apply_move(g, "O", 1, 1, expected_version=expected)
+    assert exc.value.code == "stale_version" and exc.value.current_version == 1
+    assert str(expected) in str(exc.value)
+    assert g.version == 1  # input untouched
+
+
+def test_stale_version_is_reported_before_any_rule_error():
+    g = apply_move(new_game(), "X", 1, 1)  # version 1, O to move
+    # Each of these would be a rule error with the right version...
+    with pytest.raises(NotYourTurn):
+        apply_move(g, "X", 0, 0, expected_version=1)
+    with pytest.raises(CellTaken):
+        apply_move(g, "O", 1, 1, expected_version=1)
+    with pytest.raises(OutOfBounds):
+        apply_move(g, "O", 9, 9, expected_version=1)
+    # ...but a stale caller is told to refresh instead.
+    for args in [("X", 0, 0), ("O", 1, 1), ("O", 9, 9)]:
+        with pytest.raises(StaleVersion):
+            apply_move(g, *args, expected_version=0)
+
+
+def test_stale_version_beats_game_over():
+    cells, _ = X_WINS["row0"]
+    g = play(new_game(), cells)
+    with pytest.raises(GameOver):
+        apply_move(g, "O", 2, 2, expected_version=g.version)
+    with pytest.raises(StaleVersion):
+        apply_move(g, "O", 2, 2, expected_version=g.version - 1)
 
 
 # --- winning --------------------------------------------------------------

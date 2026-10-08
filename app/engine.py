@@ -45,6 +45,16 @@ class GameOver(EngineError):
     code = "game_over"
 
 
+class StaleVersion(EngineError):
+    """The caller acted on an outdated (or impossible) view of the game."""
+
+    code = "stale_version"
+
+    def __init__(self, message: str, current_version: int) -> None:
+        super().__init__(message)
+        self.current_version = current_version
+
+
 @dataclass(frozen=True)
 class Move:
     n: int  # 1-based position in the log
@@ -82,7 +92,17 @@ def new_game(rows: int = 3, cols: int = 3, k: int = 3) -> Game:
     return Game(rows, cols, k, (), board, "in_progress", None, ())
 
 
-def apply_move(game: Game, player: Player, row: int, col: int) -> Game:
+def apply_move(
+    game: Game, player: Player, row: int, col: int, expected_version: int | None = None
+) -> Game:
+    # Staleness is about the caller's view, so it is checked before any rule:
+    # a client that is behind should refresh rather than be told about a rule
+    # that only applies to a position it is not looking at.
+    if expected_version is not None and expected_version != game.version:
+        raise StaleVersion(
+            f"game is at version {game.version}, request expected {expected_version}",
+            game.version,
+        )
     if game.status != "in_progress":
         raise GameOver("game is already finished")
     if not (0 <= row < game.rows and 0 <= col < game.cols):

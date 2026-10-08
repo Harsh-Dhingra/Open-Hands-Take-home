@@ -1,19 +1,13 @@
-import os
 import signal
-import socket
-import subprocess
-import sys
-import time
-from pathlib import Path
 
 import httpx2 as httpx
 import pytest
 from fastapi.testclient import TestClient
+from helpers import Server
 
 from app.api import create_app
 from app.store import SqliteRepository
 
-ROOT = Path(__file__).resolve().parent.parent
 MOVES = [("X", 0, 0), ("O", 1, 0), ("X", 0, 1), ("O", 1, 1)]
 
 
@@ -94,48 +88,6 @@ def test_create_app_defaults_to_db_path_env(tmp_path, monkeypatch):
 
 
 # --- real server process -----------------------------------------------------
-
-
-def free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-class Server:
-    def __init__(self, db):
-        self.db, self.port, self.proc = db, free_port(), None
-        self.url = f"http://127.0.0.1:{self.port}"
-
-    def start(self):
-        self.proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "uvicorn",
-                "--factory",
-                "app.api:create_app",
-                "--port",
-                str(self.port),
-                "--log-level",
-                "warning",
-            ],  # fmt: skip
-            cwd=ROOT,
-            env={**os.environ, "DB_PATH": str(self.db)},
-        )
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            try:
-                if httpx.get(f"{self.url}/healthz").status_code == 200:
-                    return self
-            except httpx.TransportError:
-                time.sleep(0.1)
-        self.stop(signal.SIGKILL)
-        raise RuntimeError("server did not start")
-
-    def stop(self, sig):
-        self.proc.send_signal(sig)
-        self.proc.wait(timeout=10)
 
 
 @pytest.mark.slow

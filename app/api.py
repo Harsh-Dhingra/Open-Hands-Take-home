@@ -9,8 +9,10 @@ from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from app import engine
+from app.events import EventBroker, EventStreamResponse, game_event_stream, parse_last_event_id
 from app.limits import describe, validate_config
 from app.models import (
     ConfigOut,
@@ -49,9 +51,15 @@ def _error(status: int, code: str, message: str, **extra: int) -> JSONResponse:
     return JSONResponse(status_code=status, content={"error": detail})
 
 
-def create_app(repo: GameRepository | None = None) -> FastAPI:
+def create_app(
+    repo: GameRepository | None = None, keepalive_seconds: float | None = None
+) -> FastAPI:
     repo = repo or SqliteRepository(os.environ.get("DB_PATH", "tictactoe.db"))
+    if keepalive_seconds is None:
+        keepalive_seconds = float(os.environ.get("SSE_KEEPALIVE_SECONDS", "5"))
+    broker = EventBroker()
     app = FastAPI(title="Tic-Tac-Toe")
+    app.state.broker = broker
 
     @app.exception_handler(engine.EngineError)
     @app.exception_handler(GameNotFound)
@@ -100,11 +108,22 @@ def create_app(repo: GameRepository | None = None) -> FastAPI:
             game_id,
             lambda g: engine.apply_move(g, req.player, req.row, req.col, req.expected_version),
         )
+        broker.publish(game_id)  # only after the move is saved
         return game_out(game_id, game)
 
     @app.get("/games/{game_id}/moves", response_model=list[MoveOut], responses=ERROR_RESPONSES)
     def get_moves(game_id: str) -> list[MoveOut]:
         return [move_out(m) for m in repo.get(game_id).moves]
+
+    @app.get("/games/{game_id}/events", responses={404: {"model": ErrorOut}})
+    async def game_events(game_id: str, request: Request) -> EventStreamResponse:
+        await run_in_threadpool(repo.get, game_id)  # unknown id: JSON 404 before streaming
+        last_event_id = parse_last_event_id(request.headers.get("last-event-id"))
+        return EventStreamResponse(
+            game_event_stream(repo, broker, game_id, last_event_id, keepalive_seconds),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     # Mounted last so every API route above wins; serves the UI at /.
     app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
